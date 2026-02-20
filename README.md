@@ -1,4 +1,11 @@
-# Berth — The Safe Runtime & Package Manager for MCP Servers
+<p align="center">
+  <img src="assets/berth-header.png" alt="Berth header logo" width="1024" />
+</p>
+
+<h1 align="center">
+  <img src="assets/berth-icon.png" alt="Berth repository icon" width="52" />
+  Berth — The Safe Runtime & Package Manager for MCP Servers
+</h1>
 
 > A safe berth for your AI tools.
 

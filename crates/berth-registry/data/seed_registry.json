@@ -1,0 +1,214 @@
+[
+  {
+    "name": "github",
+    "displayName": "GitHub MCP Server",
+    "description": "Access GitHub repos, issues, PRs, and actions",
+    "version": "1.2.0",
+    "source": {
+      "type": "npm",
+      "package": "@modelcontextprotocol/server-github",
+      "repository": "https://github.com/modelcontextprotocol/servers"
+    },
+    "runtime": {
+      "type": "node",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"]
+    },
+    "transport": "stdio",
+    "permissions": {
+      "network": ["api.github.com:443"],
+      "env": ["GITHUB_TOKEN"]
+    },
+    "config": {
+      "required": [
+        { "key": "token", "env": "GITHUB_TOKEN", "description": "GitHub Personal Access Token", "sensitive": true }
+      ],
+      "optional": [
+        { "key": "enterprise-url", "description": "GitHub Enterprise URL", "default": null }
+      ]
+    },
+    "compatibility": {
+      "clients": ["claude-desktop", "cursor", "windsurf", "generic"],
+      "platforms": ["macos", "linux", "windows"]
+    },
+    "quality": {
+      "securityScan": "pass",
+      "healthCheck": true,
+      "lastVerified": "2026-02-18",
+      "downloads": 45230
+    },
+    "category": "developer-tools",
+    "tags": ["github", "git", "code", "issues", "pull-requests"],
+    "maintainer": "Anthropic",
+    "trustLevel": "official"
+  },
+  {
+    "name": "filesystem",
+    "displayName": "Filesystem MCP Server",
+    "description": "Secure access to local filesystem with configurable read/write permissions",
+    "version": "1.0.3",
+    "source": {
+      "type": "npm",
+      "package": "@modelcontextprotocol/server-filesystem",
+      "repository": "https://github.com/modelcontextprotocol/servers"
+    },
+    "runtime": {
+      "type": "node",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem"]
+    },
+    "transport": "stdio",
+    "permissions": {
+      "network": [],
+      "env": []
+    },
+    "config": {
+      "required": [
+        { "key": "allowed-dirs", "description": "Comma-separated list of directories the server can access", "sensitive": false }
+      ],
+      "optional": [
+        { "key": "read-only", "description": "Restrict to read-only access", "default": "false" }
+      ]
+    },
+    "compatibility": {
+      "clients": ["claude-desktop", "cursor", "windsurf", "generic"],
+      "platforms": ["macos", "linux", "windows"]
+    },
+    "quality": {
+      "securityScan": "pass",
+      "healthCheck": true,
+      "lastVerified": "2026-02-17",
+      "downloads": 38910
+    },
+    "category": "filesystem",
+    "tags": ["filesystem", "files", "local", "read", "write"],
+    "maintainer": "Anthropic",
+    "trustLevel": "official"
+  },
+  {
+    "name": "brave-search",
+    "displayName": "Brave Search MCP Server",
+    "description": "Web and local search using the Brave Search API",
+    "version": "1.1.0",
+    "source": {
+      "type": "npm",
+      "package": "@modelcontextprotocol/server-brave-search",
+      "repository": "https://github.com/modelcontextprotocol/servers"
+    },
+    "runtime": {
+      "type": "node",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-brave-search"]
+    },
+    "transport": "stdio",
+    "permissions": {
+      "network": ["api.search.brave.com:443"],
+      "env": ["BRAVE_API_KEY"]
+    },
+    "config": {
+      "required": [
+        { "key": "api-key", "env": "BRAVE_API_KEY", "description": "Brave Search API key", "sensitive": true }
+      ],
+      "optional": []
+    },
+    "compatibility": {
+      "clients": ["claude-desktop", "cursor", "windsurf", "generic"],
+      "platforms": ["macos", "linux", "windows"]
+    },
+    "quality": {
+      "securityScan": "pass",
+      "healthCheck": true,
+      "lastVerified": "2026-02-16",
+      "downloads": 22150
+    },
+    "category": "search",
+    "tags": ["search", "web", "brave", "local-search"],
+    "maintainer": "Anthropic",
+    "trustLevel": "official"
+  },
+  {
+    "name": "postgres",
+    "displayName": "PostgreSQL MCP Server",
+    "description": "Read-only access to PostgreSQL databases with schema inspection",
+    "version": "1.0.1",
+    "source": {
+      "type": "npm",
+      "package": "@modelcontextprotocol/server-postgres",
+      "repository": "https://github.com/modelcontextprotocol/servers"
+    },
+    "runtime": {
+      "type": "node",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres"]
+    },
+    "transport": "stdio",
+    "permissions": {
+      "network": ["*:5432"],
+      "env": ["POSTGRES_CONNECTION_STRING"]
+    },
+    "config": {
+      "required": [
+        { "key": "connection-string", "env": "POSTGRES_CONNECTION_STRING", "description": "PostgreSQL connection string", "sensitive": true }
+      ],
+      "optional": [
+        { "key": "schema", "description": "Default schema to use", "default": "public" }
+      ]
+    },
+    "compatibility": {
+      "clients": ["claude-desktop", "cursor", "windsurf", "generic"],
+      "platforms": ["macos", "linux", "windows"]
+    },
+    "quality": {
+      "securityScan": "pass",
+      "healthCheck": true,
+      "lastVerified": "2026-02-15",
+      "downloads": 18470
+    },
+    "category": "databases",
+    "tags": ["postgres", "postgresql", "database", "sql", "query"],
+    "maintainer": "Anthropic",
+    "trustLevel": "official"
+  },
+  {
+    "name": "slack",
+    "displayName": "Slack MCP Server",
+    "description": "Access Slack workspaces, channels, messages, and users",
+    "version": "1.1.2",
+    "source": {
+      "type": "npm",
+      "package": "@modelcontextprotocol/server-slack",
+      "repository": "https://github.com/modelcontextprotocol/servers"
+    },
+    "runtime": {
+      "type": "node",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-slack"]
+    },
+    "transport": "stdio",
+    "permissions": {
+      "network": ["slack.com:443", "api.slack.com:443"],
+      "env": ["SLACK_BOT_TOKEN", "SLACK_TEAM_ID"]
+    },
+    "config": {
+      "required": [
+        { "key": "bot-token", "env": "SLACK_BOT_TOKEN", "description": "Slack Bot User OAuth Token", "sensitive": true },
+        { "key": "team-id", "env": "SLACK_TEAM_ID", "description": "Slack Team/Workspace ID", "sensitive": false }
+      ],
+      "optional": []
+    },
+    "compatibility": {
+      "clients": ["claude-desktop", "cursor", "windsurf", "generic"],
+      "platforms": ["macos", "linux", "windows"]
+    },
+    "quality": {
+      "securityScan": "pass",
+      "healthCheck": true,
+      "lastVerified": "2026-02-18",
+      "downloads": 31640
+    },
+    "category": "communication",
+    "tags": ["slack", "messaging", "channels", "team", "communication"],
+    "maintainer": "Anthropic",
+    "trustLevel": "official"
+  }
+]

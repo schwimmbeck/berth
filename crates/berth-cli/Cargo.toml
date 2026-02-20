@@ -1,0 +1,17 @@
+[package]
+name = "berth-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Berth CLI - the safe runtime & package manager for MCP servers"
+
+[[bin]]
+name = "berth"
+path = "src/main.rs"
+
+[dependencies]
+berth-registry = { path = "../berth-registry" }
+berth-runtime = { path = "../berth-runtime" }
+clap = { version = "4", features = ["derive"] }
+colored = "3"
+dirs = "6"

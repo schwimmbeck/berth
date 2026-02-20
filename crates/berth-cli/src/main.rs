@@ -1,4 +1,5 @@
 mod commands;
+pub mod paths;
 
 use clap::Parser;
 use commands::Commands;

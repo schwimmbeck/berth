@@ -1,3 +1,4 @@
+pub mod config;
 pub mod search;
 pub mod seed;
 pub mod types;

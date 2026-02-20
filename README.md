@@ -43,8 +43,8 @@ berth list
 | MCP server search | Working | Search the registry by name, tag, or category |
 | MCP server info | Working | View metadata, permissions, config, compatibility |
 | List installed MCP servers | Working | See what's installed and its status |
-| Install / uninstall MCP servers | Planned | One-command install from the registry |
-| Configure MCP servers | Planned | Interactive config with credential storage |
+| Install / uninstall MCP servers | Working | One-command install from the registry |
+| Configure MCP servers | Working | Set and view server configuration |
 | Start / stop / restart MCP servers | Planned | Process supervision with auto-restart |
 | MCP server health & status | Planned | Health checks and status monitoring |
 | MCP server log streaming | Planned | Unified structured logging |
@@ -59,10 +59,10 @@ berth search <query>           Search the MCP server registry
 berth info <server>            Show detailed MCP server info
 berth list                     List installed MCP servers
 
-berth install <server>         Install an MCP server (planned)
-berth uninstall <server>       Remove an MCP server (planned)
+berth install <server>         Install an MCP server
+berth uninstall <server>       Remove an MCP server
 berth update <server|--all>    Update MCP servers (planned)
-berth config <server>          Configure an MCP server (planned)
+berth config <server>          Configure an MCP server
 
 berth start [server]           Start MCP server(s) (planned)
 berth stop [server]            Stop MCP server(s) (planned)

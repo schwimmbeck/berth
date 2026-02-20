@@ -1,13 +1,13 @@
 use colored::Colorize;
 use std::fs;
-use std::path::PathBuf;
 
-fn berth_servers_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".berth").join("servers"))
-}
+use berth_registry::config::InstalledServer;
+use berth_registry::Registry;
+
+use crate::paths;
 
 pub fn execute() {
-    let servers_dir = match berth_servers_dir() {
+    let servers_dir = match paths::berth_servers_dir() {
         Some(d) => d,
         None => {
             eprintln!("{} Could not determine home directory.", "✗".red().bold());
@@ -16,45 +16,27 @@ pub fn execute() {
     };
 
     if !servers_dir.exists() {
-        println!("{} No servers installed.\n", "!".yellow().bold());
-        println!(
-            "  Run {} to find servers, or {} to install one.",
-            "berth search <query>".bold(),
-            "berth install <server>".bold(),
-        );
+        print_no_servers();
         return;
     }
 
     let entries: Vec<_> = match fs::read_dir(&servers_dir) {
         Ok(rd) => rd
             .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.path()
-                    .extension()
-                    .map(|ext| ext == "toml")
-                    .unwrap_or(false)
-            })
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "toml"))
             .collect(),
         Err(_) => {
-            println!("{} No servers installed.\n", "!".yellow().bold());
-            println!(
-                "  Run {} to find servers, or {} to install one.",
-                "berth search <query>".bold(),
-                "berth install <server>".bold(),
-            );
+            print_no_servers();
             return;
         }
     };
 
     if entries.is_empty() {
-        println!("{} No servers installed.\n", "!".yellow().bold());
-        println!(
-            "  Run {} to find servers, or {} to install one.",
-            "berth search <query>".bold(),
-            "berth install <server>".bold(),
-        );
+        print_no_servers();
         return;
     }
+
+    let registry = Registry::from_seed();
 
     println!(
         "{} {} server(s) installed:\n",
@@ -62,18 +44,57 @@ pub fn execute() {
         entries.len()
     );
 
-    println!("  {:<20} {:<12}", "NAME".bold(), "STATUS".bold(),);
-    println!("  {}", "─".repeat(34));
+    println!(
+        "  {:<20} {:<12} {:<12} {}",
+        "NAME".bold(),
+        "VERSION".bold(),
+        "STATUS".bold(),
+        "UPDATE".bold(),
+    );
+    println!("  {}", "─".repeat(60));
 
     for entry in &entries {
-        let name = entry
-            .path()
+        let path = entry.path();
+        let name = path
             .file_stem()
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
-        // Status detection will come with the runtime; for now just show "stopped"
-        println!("  {:<20} {:<12}", name.cyan(), "stopped".dimmed(),);
+
+        let (version, update) = match fs::read_to_string(&path) {
+            Ok(content) => match toml::from_str::<InstalledServer>(&content) {
+                Ok(installed) => {
+                    let ver = installed.server.version.clone();
+                    let upd = match registry.get(&name) {
+                        Some(meta) if meta.version != ver => {
+                            format!("{} available", meta.version).yellow().to_string()
+                        }
+                        Some(_) => "up to date".green().to_string(),
+                        None => "unknown".dimmed().to_string(),
+                    };
+                    (ver, upd)
+                }
+                Err(_) => ("?".to_string(), "parse error".red().to_string()),
+            },
+            Err(_) => ("?".to_string(), "read error".red().to_string()),
+        };
+
+        println!(
+            "  {:<20} {:<12} {:<12} {}",
+            name.cyan(),
+            version,
+            "stopped".dimmed(),
+            update,
+        );
     }
     println!();
+}
+
+fn print_no_servers() {
+    println!("{} No servers installed.\n", "!".yellow().bold());
+    println!(
+        "  Run {} to find servers, or {} to install one.",
+        "berth search <query>".bold(),
+        "berth install <server>".bold(),
+    );
 }

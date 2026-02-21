@@ -109,6 +109,7 @@ Registry API endpoints:
 - `GET /servers/filters`
 - `GET /servers/trending?limit=<n>&category=<category>&platform=<platform>&trustLevel=<level>`
 - `GET /servers/<name>`
+- `GET /servers/<name>/related?limit=<n>`
 - `GET /servers/<name>/downloads`
 - `GET /servers/<name>/community`
 - `POST /servers/<name>/star`

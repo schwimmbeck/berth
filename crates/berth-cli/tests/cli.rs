@@ -566,7 +566,7 @@ fn registry_api_serves_health_search_and_downloads() {
             "--bind",
             "127.0.0.1:0",
             "--max-requests",
-            "15",
+            "16",
         ])
         .stdout(Stdio::piped())
         .spawn()
@@ -738,6 +738,19 @@ fn registry_api_serves_health_search_and_downloads() {
         .as_str()
         .unwrap_or_default()
         .contains("github.com"));
+
+    let (related_status, related_body) = http_get(&addr, "/servers/github/related?limit=3");
+    assert_eq!(related_status, 200);
+    let related: serde_json::Value = serde_json::from_str(&related_body).unwrap();
+    assert_eq!(related["server"].as_str(), Some("github"));
+    let related_servers = related["servers"].as_array().unwrap();
+    assert!(!related_servers.is_empty());
+    assert!(related_servers
+        .iter()
+        .all(|candidate| candidate["name"].as_str() != Some("github")));
+    assert!(related_servers
+        .iter()
+        .all(|candidate| candidate["relatedScore"].as_u64().is_some()));
 
     let (unverify_status, unverify_body) = http_post_json(
         &addr,

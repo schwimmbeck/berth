@@ -645,7 +645,7 @@ fn route_request(request: &HttpRequest, registry: &Registry, state: &ApiState) -
                 }),
             )
         }
-        _ => route_server_detail(method, path, request.body.trim(), registry, state),
+        _ => route_server_detail(method, path, query, request.body.trim(), registry, state),
     }
 }
 
@@ -1020,10 +1020,11 @@ fn compare_listed_servers(
     }
 }
 
-/// Routes `/servers/<name>` detail/community/star/report paths.
+/// Routes `/servers/<name>` detail/community/star/report/related paths.
 fn route_server_detail(
     method: &str,
     path: &str,
+    query: Option<&str>,
     body: &str,
     registry: &Registry,
     state: &ApiState,
@@ -1134,6 +1135,17 @@ fn route_server_detail(
             }
             route_server_community(server_name, state)
         }
+        Some("related") => {
+            if method != "GET" {
+                return (
+                    405,
+                    json!({
+                        "error": "method not allowed"
+                    }),
+                );
+            }
+            route_server_related(server, query, registry, state)
+        }
         Some("star") => {
             if method != "POST" {
                 return (
@@ -1183,6 +1195,118 @@ fn route_server_community(server_name: &str, state: &ApiState) -> (u16, Value) {
             }),
         ),
     }
+}
+
+fn route_server_related(
+    server: &ServerMetadata,
+    query: Option<&str>,
+    registry: &Registry,
+    state: &ApiState,
+) -> (u16, Value) {
+    let limit = parse_usize_param(query, "limit").unwrap_or(6).min(25);
+    let offset = parse_usize_param(query, "offset").unwrap_or(0);
+    let verified_publishers = state.list_verified_publishers().unwrap_or_default();
+    let server_maintainer = normalize_maintainer(&server.maintainer);
+
+    let mut related = registry
+        .list_all()
+        .iter()
+        .filter(|candidate| candidate.name != server.name)
+        .map(|candidate| {
+            let shared_tags = shared_values(&server.tags, &candidate.tags);
+            let shared_platforms = shared_values(
+                &server.compatibility.platforms,
+                &candidate.compatibility.platforms,
+            );
+            let same_category = candidate.category.eq_ignore_ascii_case(&server.category);
+            let candidate_maintainer = normalize_maintainer(&candidate.maintainer);
+            let same_maintainer =
+                !server_maintainer.is_empty() && candidate_maintainer == server_maintainer;
+            let same_trust = candidate.trust_level.to_string() == server.trust_level.to_string();
+            let related_score = related_server_score(
+                same_category,
+                same_maintainer,
+                same_trust,
+                shared_tags.len(),
+                shared_platforms.len(),
+                candidate.quality.downloads,
+            );
+            let (stars, reports) = state.community_counts(&candidate.name).unwrap_or((0, 0));
+            let maintainer_verified =
+                is_maintainer_verified(&candidate.maintainer, &verified_publishers);
+            let quality_score =
+                server_quality_score(candidate, maintainer_verified, stars, reports);
+            (
+                candidate,
+                related_score,
+                shared_tags,
+                shared_platforms,
+                same_category,
+                same_maintainer,
+                stars,
+                reports,
+                maintainer_verified,
+                quality_score,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    related.sort_by(|left, right| {
+        right
+            .1
+            .cmp(&left.1)
+            .then_with(|| left.0.name.cmp(&right.0.name))
+    });
+    let total = related.len();
+    let servers = related
+        .into_iter()
+        .skip(offset)
+        .take(limit)
+        .map(
+            |(
+                candidate,
+                related_score,
+                shared_tags,
+                shared_platforms,
+                same_category,
+                same_maintainer,
+                stars,
+                reports,
+                maintainer_verified,
+                quality_score,
+            )| {
+                let mut summary = server_summary(candidate, maintainer_verified, quality_score);
+                if let Some(obj) = summary.as_object_mut() {
+                    obj.insert("relatedScore".to_string(), json!(related_score));
+                    obj.insert("stars".to_string(), json!(stars));
+                    obj.insert("reports".to_string(), json!(reports));
+                    obj.insert(
+                        "match".to_string(),
+                        json!({
+                            "sameCategory": same_category,
+                            "sameMaintainer": same_maintainer,
+                            "sharedTags": shared_tags,
+                            "sharedPlatforms": shared_platforms
+                        }),
+                    );
+                }
+                summary
+            },
+        )
+        .collect::<Vec<_>>();
+    let count = servers.len();
+
+    (
+        200,
+        json!({
+            "server": server.name,
+            "total": total,
+            "count": count,
+            "offset": offset,
+            "limit": limit,
+            "servers": servers
+        }),
+    )
 }
 
 fn route_server_star(server: &ServerMetadata, state: &ApiState) -> (u16, Value) {
@@ -1293,6 +1417,53 @@ fn publisher_badges(maintainer_verified: bool) -> Vec<String> {
     } else {
         Vec::new()
     }
+}
+
+/// Computes shared values from two case-insensitive string lists.
+fn shared_values(left: &[String], right: &[String]) -> Vec<String> {
+    let mut left_set = std::collections::BTreeSet::new();
+    for value in left {
+        left_set.insert(value.to_lowercase());
+    }
+
+    let mut seen = std::collections::BTreeSet::new();
+    let mut shared = Vec::new();
+    for value in right {
+        let normalized = value.to_lowercase();
+        if left_set.contains(&normalized) && seen.insert(normalized.clone()) {
+            shared.push(normalized);
+        }
+    }
+    shared
+}
+
+/// Produces a deterministic related-server score for detail pages.
+fn related_server_score(
+    same_category: bool,
+    same_maintainer: bool,
+    same_trust: bool,
+    shared_tags: usize,
+    shared_platforms: usize,
+    downloads: u64,
+) -> u32 {
+    let mut score: i32 = 0;
+    if same_category {
+        score += 35;
+    }
+    if same_maintainer {
+        score += 30;
+    }
+    if same_trust {
+        score += 10;
+    }
+    score += (shared_tags.min(4) as i32) * 12;
+    score += (shared_platforms.min(3) as i32) * 8;
+    score += match downloads {
+        0..=999 => 2,
+        1000..=9999 => 5,
+        _ => 8,
+    };
+    score.clamp(0, 100) as u32
 }
 
 /// Builds a normalized permission summary for website rendering.
@@ -1647,6 +1818,33 @@ mod tests {
             .find(|s| s["name"].as_str() == Some("github"))
             .unwrap();
         assert!(github["stars"].as_u64().unwrap_or(0) >= 2);
+    }
+
+    #[test]
+    fn route_request_supports_related_endpoint() {
+        let registry = Registry::from_seed();
+        let state = test_state();
+
+        let (status, body) = route_request(
+            &req("GET", "/servers/github/related?limit=3"),
+            &registry,
+            &state,
+        );
+        assert_eq!(status, 200);
+        assert_eq!(body["server"].as_str(), Some("github"));
+        assert!(body["count"].as_u64().unwrap_or(0) <= 3);
+        let servers = body["servers"].as_array().unwrap();
+        assert!(!servers.is_empty());
+        assert!(servers
+            .iter()
+            .all(|candidate| candidate["name"].as_str() != Some("github")));
+        assert!(servers
+            .iter()
+            .all(|candidate| candidate["relatedScore"].as_u64().is_some()));
+        assert!(servers.iter().all(|candidate| {
+            candidate["match"]["sharedTags"].is_array()
+                && candidate["match"]["sharedPlatforms"].is_array()
+        }));
     }
 
     #[test]

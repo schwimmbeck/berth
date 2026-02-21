@@ -245,6 +245,57 @@ impl ApiState {
         Ok(reports)
     }
 
+    fn list_all_reports(&self) -> Result<Vec<ReportEvent>, String> {
+        let reports_dir = self.reports_dir();
+        if !reports_dir.exists() {
+            return Ok(Vec::new());
+        }
+        let entries = fs::read_dir(&reports_dir).map_err(|e| {
+            format!(
+                "failed to read reports directory {}: {e}",
+                reports_dir.display()
+            )
+        })?;
+
+        let mut reports = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|e| {
+                format!(
+                    "failed to enumerate reports directory {}: {e}",
+                    reports_dir.display()
+                )
+            })?;
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
+                continue;
+            }
+            let content = fs::read_to_string(&path)
+                .map_err(|e| format!("failed to read report file {}: {e}", path.display()))?;
+            for (idx, line) in content.lines().enumerate() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let event = serde_json::from_str::<ReportEvent>(trimmed).map_err(|e| {
+                    format!(
+                        "failed to parse report file {} at line {}: {e}",
+                        path.display(),
+                        idx + 1
+                    )
+                })?;
+                reports.push(event);
+            }
+        }
+        reports.sort_by(|left, right| {
+            right
+                .timestamp_epoch_secs
+                .cmp(&left.timestamp_epoch_secs)
+                .then_with(|| left.server.cmp(&right.server))
+                .then_with(|| left.reason.cmp(&right.reason))
+        });
+        Ok(reports)
+    }
+
     fn list_verified_publishers(&self) -> Result<Vec<String>, String> {
         let snapshot = self.load_snapshot()?;
         let mut normalized: Vec<String> = snapshot
@@ -1643,6 +1694,17 @@ fn route_request(request: &HttpRequest, registry: &Registry, state: &ApiState) -
             }
             route_servers_suggest(query, registry, state)
         }
+        "/reports" => {
+            if method != "GET" {
+                return (
+                    405,
+                    json!({
+                        "error": "method not allowed"
+                    }),
+                );
+            }
+            route_reports(query, state)
+        }
         "/stats" => {
             if method != "GET" {
                 return (
@@ -2082,6 +2144,58 @@ fn route_servers_suggest(
             "servers": servers
         }),
     )
+}
+
+fn route_reports(query: Option<&str>, state: &ApiState) -> (u16, Value) {
+    let limit = parse_usize_param(query, "limit").unwrap_or(50).min(200);
+    let offset = parse_usize_param(query, "offset").unwrap_or(0);
+    let server_filter = query_param(query, "server")
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string());
+    let reason_filter = query_param(query, "reason")
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string());
+
+    match state.list_all_reports() {
+        Ok(mut reports) => {
+            if let Some(server) = &server_filter {
+                reports.retain(|event| event.server.eq_ignore_ascii_case(server));
+            }
+            if let Some(reason) = &reason_filter {
+                reports.retain(|event| event.reason.eq_ignore_ascii_case(reason));
+            }
+            let total = reports.len();
+            let reports = reports
+                .into_iter()
+                .skip(offset)
+                .take(limit)
+                .collect::<Vec<_>>();
+            let count = reports.len();
+            (
+                200,
+                json!({
+                    "total": total,
+                    "count": count,
+                    "offset": offset,
+                    "limit": limit,
+                    "filters": {
+                        "server": server_filter,
+                        "reason": reason_filter
+                    },
+                    "reports": reports
+                }),
+            )
+        }
+        Err(e) => (
+            500,
+            json!({
+                "error": "internal error",
+                "detail": e
+            }),
+        ),
+    }
 }
 
 fn route_stats(query: Option<&str>, registry: &Registry, state: &ApiState) -> (u16, Value) {
@@ -3602,6 +3716,42 @@ mod tests {
 
         let maintainers = body["top"]["maintainers"].as_array().unwrap();
         assert!(!maintainers.is_empty());
+    }
+
+    #[test]
+    fn route_request_supports_reports_feed_endpoint() {
+        let registry = Registry::from_seed();
+        let state = test_state();
+
+        let report_one = HttpRequest {
+            method: "POST".to_string(),
+            target: "/servers/github/report".to_string(),
+            body: "{\"reason\":\"spam\",\"details\":\"bad output\"}".to_string(),
+        };
+        let report_two = HttpRequest {
+            method: "POST".to_string(),
+            target: "/servers/filesystem/report".to_string(),
+            body: "{\"reason\":\"abuse\",\"details\":\"unsafe behavior\"}".to_string(),
+        };
+        assert_eq!(route_request(&report_one, &registry, &state).0, 200);
+        assert_eq!(route_request(&report_two, &registry, &state).0, 200);
+
+        let (status, body) = route_request(&req("GET", "/reports?limit=10"), &registry, &state);
+        assert_eq!(status, 200);
+        assert_eq!(body["total"].as_u64(), Some(2));
+        assert_eq!(body["count"].as_u64(), Some(2));
+
+        let (github_status, github_body) =
+            route_request(&req("GET", "/reports?server=github"), &registry, &state);
+        assert_eq!(github_status, 200);
+        assert_eq!(github_body["total"].as_u64(), Some(1));
+        assert_eq!(github_body["reports"][0]["server"].as_str(), Some("github"));
+
+        let (abuse_status, abuse_body) =
+            route_request(&req("GET", "/reports?reason=abuse"), &registry, &state);
+        assert_eq!(abuse_status, 200);
+        assert_eq!(abuse_body["total"].as_u64(), Some(1));
+        assert_eq!(abuse_body["reports"][0]["reason"].as_str(), Some("abuse"));
     }
 
     #[test]

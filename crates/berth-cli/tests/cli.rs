@@ -571,7 +571,7 @@ fn registry_api_serves_health_search_and_downloads() {
             "--bind",
             "127.0.0.1:0",
             "--max-requests",
-            "24",
+            "25",
         ])
         .stdout(Stdio::piped())
         .spawn()
@@ -729,6 +729,16 @@ fn registry_api_serves_health_search_and_downloads() {
     assert_eq!(reports["count"].as_u64(), Some(1));
     assert!(reports["total"].as_u64().unwrap_or(0) >= 1);
     assert_eq!(reports["reports"][0]["reason"].as_str(), Some("spam"));
+
+    let (global_reports_status, global_reports_body) =
+        http_get(&addr, "/reports?server=github&limit=1");
+    assert_eq!(global_reports_status, 200);
+    let global_reports: serde_json::Value = serde_json::from_str(&global_reports_body).unwrap();
+    assert_eq!(global_reports["count"].as_u64(), Some(1));
+    assert_eq!(
+        global_reports["reports"][0]["server"].as_str(),
+        Some("github")
+    );
 
     let (site_detail_after_status, _site_detail_after_headers, site_detail_after_body) =
         http_get_with_headers(&addr, "/site/servers/github");

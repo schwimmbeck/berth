@@ -1,18 +1,21 @@
 //! Command handler for `berth start`.
 
 use colored::Colorize;
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 use std::process;
 
 use berth_registry::config::InstalledServer;
-use berth_runtime::{RuntimeManager, StartOutcome};
+use berth_registry::Registry;
+use berth_runtime::{ProcessSpec, RuntimeManager, StartOutcome};
 
 use crate::paths;
 
 /// Executes the `berth start` command.
 pub fn execute(server: Option<&str>) {
     let targets = resolve_targets(server);
+    let registry = Registry::from_seed();
     let berth_home = match paths::berth_home() {
         Some(h) => h,
         None => {
@@ -60,7 +63,8 @@ pub fn execute(server: Option<&str>) {
             continue;
         }
 
-        match runtime.start(name) {
+        let spec = build_process_spec(name, &installed, &registry);
+        match runtime.start(name, &spec) {
             Ok(StartOutcome::Started) => {
                 println!("{} Started {}.", "✓".green().bold(), name.cyan());
                 started += 1;
@@ -203,6 +207,34 @@ fn missing_required_keys(installed: &InstalledServer) -> Vec<String> {
         .filter(|k| installed.config.get(*k).is_none_or(|v| v.trim().is_empty()))
         .cloned()
         .collect()
+}
+
+/// Builds a runtime process spec from installed metadata and config values.
+fn build_process_spec(name: &str, installed: &InstalledServer, registry: &Registry) -> ProcessSpec {
+    let mut env = BTreeMap::new();
+
+    if let Some(meta) = registry.get(name) {
+        for field in meta
+            .config
+            .required
+            .iter()
+            .chain(meta.config.optional.iter())
+        {
+            if let Some(env_var) = &field.env {
+                if let Some(value) = installed.config.get(&field.key) {
+                    if !value.trim().is_empty() {
+                        env.insert(env_var.clone(), value.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    ProcessSpec {
+        command: installed.runtime.command.clone(),
+        args: installed.runtime.args.clone(),
+        env,
+    }
 }
 
 #[cfg(test)]

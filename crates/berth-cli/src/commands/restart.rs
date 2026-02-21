@@ -1,11 +1,13 @@
 //! Command handler for `berth restart`.
 
 use colored::Colorize;
+use std::collections::BTreeMap;
 use std::fs;
 use std::process;
 
 use berth_registry::config::InstalledServer;
-use berth_runtime::RuntimeManager;
+use berth_registry::Registry;
+use berth_runtime::{ProcessSpec, RuntimeManager};
 
 use crate::paths;
 
@@ -77,8 +79,10 @@ pub fn execute(server: &str) {
         }
     };
     let runtime = RuntimeManager::new(berth_home);
+    let registry = Registry::from_seed();
+    let spec = build_process_spec(server, &installed, &registry);
 
-    if let Err(e) = runtime.restart(server) {
+    if let Err(e) = runtime.restart(server, &spec) {
         eprintln!(
             "{} Failed to restart {}: {}",
             "✗".red().bold(),
@@ -89,4 +93,32 @@ pub fn execute(server: &str) {
     }
 
     println!("{} Restarted {}.", "✓".green().bold(), server.cyan());
+}
+
+/// Builds a runtime process spec from installed metadata and config values.
+fn build_process_spec(name: &str, installed: &InstalledServer, registry: &Registry) -> ProcessSpec {
+    let mut env = BTreeMap::new();
+
+    if let Some(meta) = registry.get(name) {
+        for field in meta
+            .config
+            .required
+            .iter()
+            .chain(meta.config.optional.iter())
+        {
+            if let Some(env_var) = &field.env {
+                if let Some(value) = installed.config.get(&field.key) {
+                    if !value.trim().is_empty() {
+                        env.insert(env_var.clone(), value.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    ProcessSpec {
+        command: installed.runtime.command.clone(),
+        args: installed.runtime.args.clone(),
+        env,
+    }
 }

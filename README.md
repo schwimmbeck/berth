@@ -52,8 +52,8 @@ berth list
 | List installed MCP servers | Working | See what's installed and its status |
 | Install / uninstall MCP servers | Working | One-command install from the registry |
 | Configure MCP servers | Working | Set and view server configuration |
-| Start / stop / restart MCP servers | Working | State-managed lifecycle controls (full process supervision planned) |
-| MCP server health & status | Working | Runtime state table for installed servers |
+| Start / stop / restart MCP servers | Working | Subprocess lifecycle controls with PID/state tracking |
+| MCP server health & status | Working | Runtime status from persisted state + process liveness checks |
 | MCP server log streaming | Working | Tail lifecycle events from persisted server logs |
 | MCP permission management | Planned | Declare and enforce server permissions |
 | MCP audit trail | Planned | Log every tool call with full context |

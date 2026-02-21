@@ -10,6 +10,46 @@ fn berth_with_home(tmp: &std::path::Path) -> Command {
     cmd
 }
 
+fn patch_runtime_to_long_running(tmp: &std::path::Path, server: &str) {
+    let config_path = tmp.join(".berth/servers").join(format!("{server}.toml"));
+    let content = std::fs::read_to_string(&config_path).unwrap();
+    let mut value: toml::Value = toml::from_str(&content).unwrap();
+    let runtime = value
+        .get_mut("runtime")
+        .and_then(toml::Value::as_table_mut)
+        .unwrap();
+
+    #[cfg(unix)]
+    {
+        runtime.insert("command".to_string(), toml::Value::String("sh".to_string()));
+        runtime.insert(
+            "args".to_string(),
+            toml::Value::Array(vec![
+                toml::Value::String("-c".to_string()),
+                toml::Value::String("sleep 60".to_string()),
+            ]),
+        );
+    }
+
+    #[cfg(windows)]
+    {
+        runtime.insert(
+            "command".to_string(),
+            toml::Value::String("cmd".to_string()),
+        );
+        runtime.insert(
+            "args".to_string(),
+            toml::Value::Array(vec![
+                toml::Value::String("/C".to_string()),
+                toml::Value::String("timeout /T 60 /NOBREAK".to_string()),
+            ]),
+        );
+    }
+
+    let rendered = toml::to_string_pretty(&value).unwrap();
+    std::fs::write(&config_path, rendered).unwrap();
+}
+
 // --- search ---
 
 #[test]
@@ -335,6 +375,7 @@ fn start_then_status_shows_running() {
         .args(["config", "github", "--set", "token=abc123"])
         .output()
         .unwrap();
+    patch_runtime_to_long_running(tmp.path(), "github");
 
     let start = berth_with_home(tmp.path())
         .args(["start", "github"])
@@ -363,6 +404,7 @@ fn stop_after_start_shows_stopped() {
         .args(["config", "github", "--set", "token=abc123"])
         .output()
         .unwrap();
+    patch_runtime_to_long_running(tmp.path(), "github");
     berth_with_home(tmp.path())
         .args(["start", "github"])
         .output()
@@ -394,6 +436,7 @@ fn restart_sets_running_state() {
         .args(["config", "github", "--set", "token=abc123"])
         .output()
         .unwrap();
+    patch_runtime_to_long_running(tmp.path(), "github");
 
     let restart = berth_with_home(tmp.path())
         .args(["restart", "github"])
@@ -420,6 +463,7 @@ fn logs_show_lifecycle_events() {
         .args(["config", "github", "--set", "token=abc123"])
         .output()
         .unwrap();
+    patch_runtime_to_long_running(tmp.path(), "github");
     berth_with_home(tmp.path())
         .args(["start", "github"])
         .output()

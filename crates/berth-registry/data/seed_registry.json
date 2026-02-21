@@ -433,5 +433,218 @@
     "tags": ["memory", "state", "storage", "assistant"],
     "maintainer": "Community",
     "trustLevel": "community"
+  },
+  {
+    "name": "puppeteer",
+    "displayName": "Puppeteer MCP Server",
+    "description": "Automate browser tasks and capture screenshots",
+    "version": "0.7.3",
+    "source": {
+      "type": "npm",
+      "package": "@modelcontextprotocol/server-puppeteer",
+      "repository": "https://github.com/modelcontextprotocol/servers"
+    },
+    "runtime": {
+      "type": "node",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-puppeteer"]
+    },
+    "transport": "stdio",
+    "permissions": {
+      "network": ["*:443", "*:80"],
+      "env": [],
+      "filesystem": ["read:/tmp", "write:/tmp"],
+      "exec": []
+    },
+    "config": {
+      "required": [],
+      "optional": [
+        { "key": "headless", "description": "Run browser in headless mode", "default": "true" }
+      ]
+    },
+    "compatibility": {
+      "clients": ["claude-desktop", "cursor", "windsurf", "continue", "vscode", "generic"],
+      "platforms": ["macos", "linux", "windows"]
+    },
+    "quality": {
+      "securityScan": "pass",
+      "healthCheck": true,
+      "lastVerified": "2026-02-20",
+      "downloads": 6250
+    },
+    "category": "developer-tools",
+    "tags": ["puppeteer", "browser", "automation", "screenshots"],
+    "maintainer": "Community",
+    "trustLevel": "community"
+  },
+  {
+    "name": "sequential-thinking",
+    "displayName": "Sequential Thinking MCP Server",
+    "description": "Structured reasoning and chain-of-thought style planning utilities",
+    "version": "0.6.2",
+    "source": {
+      "type": "npm",
+      "package": "@modelcontextprotocol/server-sequential-thinking",
+      "repository": "https://github.com/modelcontextprotocol/servers"
+    },
+    "runtime": {
+      "type": "node",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+    },
+    "transport": "stdio",
+    "permissions": {
+      "network": [],
+      "env": [],
+      "filesystem": [],
+      "exec": []
+    },
+    "config": {
+      "required": [],
+      "optional": []
+    },
+    "compatibility": {
+      "clients": ["claude-desktop", "cursor", "windsurf", "continue", "vscode", "generic"],
+      "platforms": ["macos", "linux", "windows"]
+    },
+    "quality": {
+      "securityScan": "pass",
+      "healthCheck": true,
+      "lastVerified": "2026-02-20",
+      "downloads": 4970
+    },
+    "category": "developer-tools",
+    "tags": ["reasoning", "planning", "thinking", "workflow"],
+    "maintainer": "Community",
+    "trustLevel": "community"
+  },
+  {
+    "name": "google-maps",
+    "displayName": "Google Maps MCP Server",
+    "description": "Places, geocoding, and routing via Google Maps APIs",
+    "version": "0.7.0",
+    "source": {
+      "type": "npm",
+      "package": "@modelcontextprotocol/server-google-maps",
+      "repository": "https://github.com/modelcontextprotocol/servers"
+    },
+    "runtime": {
+      "type": "node",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-google-maps"]
+    },
+    "transport": "stdio",
+    "permissions": {
+      "network": ["maps.googleapis.com:443"],
+      "env": ["GOOGLE_MAPS_API_KEY"],
+      "filesystem": [],
+      "exec": []
+    },
+    "config": {
+      "required": [
+        { "key": "api-key", "env": "GOOGLE_MAPS_API_KEY", "description": "Google Maps API key", "sensitive": true }
+      ],
+      "optional": []
+    },
+    "compatibility": {
+      "clients": ["claude-desktop", "cursor", "windsurf", "continue", "vscode", "generic"],
+      "platforms": ["macos", "linux", "windows"]
+    },
+    "quality": {
+      "securityScan": "pass",
+      "healthCheck": true,
+      "lastVerified": "2026-02-20",
+      "downloads": 5380
+    },
+    "category": "search",
+    "tags": ["google-maps", "geocoding", "places", "routing"],
+    "maintainer": "Community",
+    "trustLevel": "community"
+  },
+  {
+    "name": "docker",
+    "displayName": "Docker MCP Server",
+    "description": "Inspect and manage local Docker containers and images",
+    "version": "0.8.1",
+    "source": {
+      "type": "npm",
+      "package": "@modelcontextprotocol/server-docker",
+      "repository": "https://github.com/modelcontextprotocol/servers"
+    },
+    "runtime": {
+      "type": "node",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-docker"]
+    },
+    "transport": "stdio",
+    "permissions": {
+      "network": ["*:2375", "*:2376"],
+      "env": ["DOCKER_HOST"],
+      "filesystem": ["read:/var/run/docker.sock", "write:/var/run/docker.sock"],
+      "exec": ["docker"]
+    },
+    "config": {
+      "required": [],
+      "optional": [
+        { "key": "context", "description": "Docker context name", "default": "default" }
+      ]
+    },
+    "compatibility": {
+      "clients": ["claude-desktop", "cursor", "windsurf", "continue", "vscode", "generic"],
+      "platforms": ["macos", "linux", "windows"]
+    },
+    "quality": {
+      "securityScan": "pass",
+      "healthCheck": true,
+      "lastVerified": "2026-02-20",
+      "downloads": 5790
+    },
+    "category": "developer-tools",
+    "tags": ["docker", "containers", "images", "devops"],
+    "maintainer": "Community",
+    "trustLevel": "community"
+  },
+  {
+    "name": "kubernetes",
+    "displayName": "Kubernetes MCP Server",
+    "description": "Query and operate Kubernetes cluster resources",
+    "version": "0.6.9",
+    "source": {
+      "type": "npm",
+      "package": "@modelcontextprotocol/server-kubernetes",
+      "repository": "https://github.com/modelcontextprotocol/servers"
+    },
+    "runtime": {
+      "type": "node",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-kubernetes"]
+    },
+    "transport": "stdio",
+    "permissions": {
+      "network": ["*:443"],
+      "env": ["KUBECONFIG"],
+      "filesystem": ["read:/home/user/.kube"],
+      "exec": ["kubectl"]
+    },
+    "config": {
+      "required": [],
+      "optional": [
+        { "key": "namespace", "description": "Default namespace", "default": "default" }
+      ]
+    },
+    "compatibility": {
+      "clients": ["claude-desktop", "cursor", "windsurf", "continue", "vscode", "generic"],
+      "platforms": ["macos", "linux", "windows"]
+    },
+    "quality": {
+      "securityScan": "pass",
+      "healthCheck": true,
+      "lastVerified": "2026-02-20",
+      "downloads": 5510
+    },
+    "category": "developer-tools",
+    "tags": ["kubernetes", "k8s", "cluster", "devops"],
+    "maintainer": "Community",
+    "trustLevel": "community"
   }
 ]

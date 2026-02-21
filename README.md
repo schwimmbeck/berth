@@ -146,6 +146,11 @@ Berth ships with a built-in registry of popular MCP servers:
 | `sqlite` | Query local SQLite databases | Databases |
 | `fetch` | Fetch HTTP resources for tool workflows | Search |
 | `memory` | Store and retrieve structured memory for assistants | Developer Tools |
+| `puppeteer` | Automate browser tasks and capture screenshots | Developer Tools |
+| `sequential-thinking` | Structured reasoning and planning utilities | Developer Tools |
+| `google-maps` | Places, geocoding, and routing via Google Maps APIs | Search |
+| `docker` | Inspect and manage local Docker containers and images | Developer Tools |
+| `kubernetes` | Query and operate Kubernetes cluster resources | Developer Tools |
 
 More MCP servers will be added as the registry grows.
 

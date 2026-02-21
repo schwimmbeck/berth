@@ -83,6 +83,11 @@ dependencies = [
 [[package]]
 name = "berth-runtime"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "tempfile",
+ "toml",
+]
 
 [[package]]
 name = "bitflags"

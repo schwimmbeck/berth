@@ -3,6 +3,7 @@ use std::fs;
 
 use berth_registry::config::InstalledServer;
 use berth_registry::Registry;
+use berth_runtime::{RuntimeManager, ServerStatus};
 
 use crate::paths;
 
@@ -37,6 +38,7 @@ pub fn execute() {
     }
 
     let registry = Registry::from_seed();
+    let runtime = RuntimeManager::new(paths::berth_home().unwrap_or_else(|| servers_dir.clone()));
 
     println!(
         "{} {} server(s) installed:\n",
@@ -79,11 +81,17 @@ pub fn execute() {
             Err(_) => ("?".to_string(), "read error".red().to_string()),
         };
 
+        let status = match runtime.status(&name) {
+            Ok(ServerStatus::Running) => "running".green().to_string(),
+            Ok(ServerStatus::Stopped) => "stopped".dimmed().to_string(),
+            Err(_) => "error".red().to_string(),
+        };
+
         println!(
             "  {:<20} {:<12} {:<12} {}",
             name.cyan(),
             version,
-            "stopped".dimmed(),
+            status,
             update,
         );
     }

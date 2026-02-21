@@ -52,9 +52,9 @@ berth list
 | List installed MCP servers | Working | See what's installed and its status |
 | Install / uninstall MCP servers | Working | One-command install from the registry |
 | Configure MCP servers | Working | Set and view server configuration |
-| Start / stop / restart MCP servers | Planned | Process supervision with auto-restart |
-| MCP server health & status | Planned | Health checks and status monitoring |
-| MCP server log streaming | Planned | Unified structured logging |
+| Start / stop / restart MCP servers | Working | State-managed lifecycle controls (full process supervision planned) |
+| MCP server health & status | Working | Runtime state table for installed servers |
+| MCP server log streaming | Working | Tail lifecycle events from persisted server logs |
 | MCP permission management | Planned | Declare and enforce server permissions |
 | MCP audit trail | Planned | Log every tool call with full context |
 | AI client integration | Planned | Auto-configure Claude Desktop, Cursor, Windsurf |
@@ -71,11 +71,11 @@ berth uninstall <server>       Remove an MCP server
 berth update <server|--all>    Update MCP servers (planned)
 berth config <server>          Configure an MCP server
 
-berth start [server]           Start MCP server(s) (planned)
-berth stop [server]            Stop MCP server(s) (planned)
-berth restart <server>         Restart an MCP server (planned)
-berth status                   Show MCP server status (planned)
-berth logs <server>            Stream MCP server logs (planned)
+berth start [server]           Start MCP server(s)
+berth stop [server]            Stop MCP server(s)
+berth restart <server>         Restart an MCP server
+berth status                   Show MCP server status
+berth logs <server>            Show recent MCP server logs
 
 berth permissions <server>     Manage MCP server permissions (planned)
 berth audit [server]           View MCP tool call audit log (planned)
@@ -128,7 +128,7 @@ berth/
   crates/
     berth-cli/                   # Binary crate (the `berth` command)
     berth-registry/              # MCP server registry client, types, search engine
-    berth-runtime/               # MCP server process management (stub)
+    berth-runtime/               # MCP server runtime state management (tokio supervision planned)
 ```
 
 ## Related

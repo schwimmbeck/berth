@@ -293,6 +293,152 @@ fn list_shows_version_after_install() {
     assert!(stdout.contains("1.2.0"));
 }
 
+// --- runtime lifecycle ---
+
+#[test]
+fn start_not_installed_exits_1() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = berth_with_home(tmp.path())
+        .args(["start", "github"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("not installed"));
+}
+
+#[test]
+fn start_requires_config_before_running() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+
+    let output = berth_with_home(tmp.path())
+        .args(["start", "github"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Missing required config"));
+}
+
+#[test]
+fn start_then_status_shows_running() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "token=abc123"])
+        .output()
+        .unwrap();
+
+    let start = berth_with_home(tmp.path())
+        .args(["start", "github"])
+        .output()
+        .unwrap();
+    assert!(start.status.success());
+
+    let status = berth_with_home(tmp.path())
+        .args(["status"])
+        .output()
+        .unwrap();
+    assert!(status.status.success());
+    let stdout = String::from_utf8_lossy(&status.stdout);
+    assert!(stdout.contains("github"));
+    assert!(stdout.contains("running"));
+}
+
+#[test]
+fn stop_after_start_shows_stopped() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "token=abc123"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["start", "github"])
+        .output()
+        .unwrap();
+
+    let stop = berth_with_home(tmp.path())
+        .args(["stop", "github"])
+        .output()
+        .unwrap();
+    assert!(stop.status.success());
+
+    let status = berth_with_home(tmp.path())
+        .args(["status"])
+        .output()
+        .unwrap();
+    assert!(status.status.success());
+    let stdout = String::from_utf8_lossy(&status.stdout);
+    assert!(stdout.contains("stopped"));
+}
+
+#[test]
+fn restart_sets_running_state() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "token=abc123"])
+        .output()
+        .unwrap();
+
+    let restart = berth_with_home(tmp.path())
+        .args(["restart", "github"])
+        .output()
+        .unwrap();
+    assert!(restart.status.success());
+
+    let status = berth_with_home(tmp.path())
+        .args(["status"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&status.stdout);
+    assert!(stdout.contains("running"));
+}
+
+#[test]
+fn logs_show_lifecycle_events() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "token=abc123"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["start", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["stop", "github"])
+        .output()
+        .unwrap();
+
+    let logs = berth_with_home(tmp.path())
+        .args(["logs", "github", "--tail", "10"])
+        .output()
+        .unwrap();
+    assert!(logs.status.success());
+    let stdout = String::from_utf8_lossy(&logs.stdout);
+    assert!(stdout.contains("START"));
+    assert!(stdout.contains("STOP"));
+}
+
 // --- update ---
 
 #[test]

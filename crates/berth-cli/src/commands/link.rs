@@ -14,7 +14,7 @@ use berth_registry::Registry;
 use crate::paths;
 
 #[derive(Serialize)]
-struct ClaudeDesktopServerConfig {
+struct ClientServerConfig {
     command: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     args: Vec<String>,
@@ -24,29 +24,25 @@ struct ClaudeDesktopServerConfig {
 
 /// Executes the `berth link` command.
 pub fn execute(client: &str) {
-    if client != "claude-desktop" {
-        eprintln!(
-            "{} Client {} is not supported yet. Use {} for now.",
-            "✗".red().bold(),
-            client.cyan(),
-            "claude-desktop".bold()
-        );
-        process::exit(1);
-    }
-
-    link_claude_desktop();
-}
-
-/// Links all installable Berth servers into Claude Desktop config.
-fn link_claude_desktop() {
-    let config_path = match paths::claude_desktop_config_path() {
+    let config_path = match paths::client_config_path(client) {
         Some(p) => p,
         None => {
-            eprintln!("{} Could not determine home directory.", "✗".red().bold());
+            eprintln!(
+                "{} Unsupported client {}. Supported: {}, {}, {}.",
+                "✗".red().bold(),
+                client.cyan(),
+                "claude-desktop".bold(),
+                "cursor".bold(),
+                "windsurf".bold()
+            );
             process::exit(1);
         }
     };
+    link_client(client, &config_path);
+}
 
+/// Links all installable Berth servers into a supported client config file.
+fn link_client(client: &str, config_path: &Path) {
     let linked_servers = match load_linkable_servers() {
         Ok(servers) => servers,
         Err(msg) => {
@@ -68,7 +64,7 @@ fn link_claude_desktop() {
     }
 
     let (mut root, backup_path) = if config_path.exists() {
-        let content = match fs::read_to_string(&config_path) {
+        let content = match fs::read_to_string(config_path) {
             Ok(c) => c,
             Err(e) => {
                 eprintln!(
@@ -94,8 +90,8 @@ fn link_claude_desktop() {
             }
         };
 
-        let backup = backup_path(&config_path);
-        if let Err(e) = fs::copy(&config_path, &backup) {
+        let backup = backup_path(config_path);
+        if let Err(e) = fs::copy(config_path, &backup) {
             eprintln!(
                 "{} Failed to create backup {}: {}",
                 "✗".red().bold(),
@@ -164,7 +160,7 @@ fn link_claude_desktop() {
         }
     };
 
-    if let Err(e) = fs::write(&config_path, rendered) {
+    if let Err(e) = fs::write(config_path, rendered) {
         eprintln!(
             "{} Failed to write client config {}: {}",
             "✗".red().bold(),
@@ -178,7 +174,7 @@ fn link_claude_desktop() {
         "{} Linked {} to {} with {} server(s).",
         "✓".green().bold(),
         "berth".bold(),
-        "claude-desktop".cyan(),
+        client.cyan(),
         linked_servers.len()
     );
     println!("  Config: {}", config_path.display());
@@ -187,8 +183,8 @@ fn link_claude_desktop() {
     }
 }
 
-/// Loads installed server definitions and converts them to Claude Desktop entries.
-fn load_linkable_servers() -> Result<Vec<(String, ClaudeDesktopServerConfig)>, String> {
+/// Loads installed server definitions and converts them to client entries.
+fn load_linkable_servers() -> Result<Vec<(String, ClientServerConfig)>, String> {
     let servers_dir = paths::berth_servers_dir().ok_or("Could not determine home directory.")?;
 
     if !servers_dir.exists() {
@@ -258,7 +254,7 @@ fn load_linkable_servers() -> Result<Vec<(String, ClaudeDesktopServerConfig)>, S
 
         out.push((
             name,
-            ClaudeDesktopServerConfig {
+            ClientServerConfig {
                 command: installed.runtime.command,
                 args: installed.runtime.args,
                 env,

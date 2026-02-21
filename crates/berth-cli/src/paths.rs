@@ -31,37 +31,108 @@ pub fn audit_log_path() -> Option<PathBuf> {
     berth_home().map(|h| h.join("audit").join("audit.jsonl"))
 }
 
-/// Returns the Claude Desktop config path for the current platform.
-pub fn claude_desktop_config_path() -> Option<PathBuf> {
+/// Returns a client MCP config path for the current platform.
+pub fn client_config_path(client: &str) -> Option<PathBuf> {
+    let (dir_name, file_name) = match client {
+        "claude-desktop" => ("claude-desktop", "claude_desktop_config.json"),
+        "cursor" => ("cursor", "cursor_mcp_config.json"),
+        "windsurf" => ("windsurf", "windsurf_mcp_config.json"),
+        _ => return None,
+    };
+
     if let Ok(home) = std::env::var("BERTH_HOME") {
         return Some(
             PathBuf::from(home)
                 .join("clients")
-                .join("claude-desktop")
-                .join("claude_desktop_config.json"),
+                .join(dir_name)
+                .join(file_name),
         );
     }
 
     let home = dirs::home_dir()?;
-    Some(if cfg!(target_os = "macos") {
-        home.join("Library")
-            .join("Application Support")
-            .join("Claude")
-            .join("claude_desktop_config.json")
-    } else if cfg!(target_os = "windows") {
-        if let Ok(appdata) = std::env::var("APPDATA") {
-            PathBuf::from(appdata)
-                .join("Claude")
-                .join("claude_desktop_config.json")
-        } else {
-            home.join("AppData")
-                .join("Roaming")
-                .join("Claude")
-                .join("claude_desktop_config.json")
+    Some(match client {
+        "claude-desktop" => {
+            if cfg!(target_os = "macos") {
+                home.join("Library")
+                    .join("Application Support")
+                    .join("Claude")
+                    .join("claude_desktop_config.json")
+            } else if cfg!(target_os = "windows") {
+                if let Ok(appdata) = std::env::var("APPDATA") {
+                    PathBuf::from(appdata)
+                        .join("Claude")
+                        .join("claude_desktop_config.json")
+                } else {
+                    home.join("AppData")
+                        .join("Roaming")
+                        .join("Claude")
+                        .join("claude_desktop_config.json")
+                }
+            } else {
+                home.join(".config")
+                    .join("Claude")
+                    .join("claude_desktop_config.json")
+            }
         }
-    } else {
-        home.join(".config")
-            .join("Claude")
-            .join("claude_desktop_config.json")
+        "cursor" => {
+            if cfg!(target_os = "macos") {
+                home.join("Library")
+                    .join("Application Support")
+                    .join("Cursor")
+                    .join("User")
+                    .join("mcp.json")
+            } else if cfg!(target_os = "windows") {
+                if let Ok(appdata) = std::env::var("APPDATA") {
+                    PathBuf::from(appdata)
+                        .join("Cursor")
+                        .join("User")
+                        .join("mcp.json")
+                } else {
+                    home.join("AppData")
+                        .join("Roaming")
+                        .join("Cursor")
+                        .join("User")
+                        .join("mcp.json")
+                }
+            } else {
+                home.join(".config")
+                    .join("Cursor")
+                    .join("User")
+                    .join("mcp.json")
+            }
+        }
+        "windsurf" => {
+            if cfg!(target_os = "macos") {
+                home.join("Library")
+                    .join("Application Support")
+                    .join("Windsurf")
+                    .join("User")
+                    .join("mcp.json")
+            } else if cfg!(target_os = "windows") {
+                if let Ok(appdata) = std::env::var("APPDATA") {
+                    PathBuf::from(appdata)
+                        .join("Windsurf")
+                        .join("User")
+                        .join("mcp.json")
+                } else {
+                    home.join("AppData")
+                        .join("Roaming")
+                        .join("Windsurf")
+                        .join("User")
+                        .join("mcp.json")
+                }
+            } else {
+                home.join(".config")
+                    .join("Windsurf")
+                    .join("User")
+                    .join("mcp.json")
+            }
+        }
+        _ => unreachable!(),
     })
+}
+
+/// Returns the Claude Desktop config path for the current platform.
+pub fn claude_desktop_config_path() -> Option<PathBuf> {
+    client_config_path("claude-desktop")
 }

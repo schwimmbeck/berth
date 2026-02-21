@@ -10,39 +10,36 @@ use crate::paths;
 
 /// Executes the `berth unlink` command.
 pub fn execute(client: &str) {
-    if client != "claude-desktop" {
-        eprintln!(
-            "{} Client {} is not supported yet. Use {} for now.",
-            "✗".red().bold(),
-            client.cyan(),
-            "claude-desktop".bold()
-        );
-        process::exit(1);
-    }
-
-    unlink_claude_desktop();
-}
-
-/// Removes Berth-managed server entries from Claude Desktop config.
-fn unlink_claude_desktop() {
-    let config_path = match paths::claude_desktop_config_path() {
+    let config_path = match paths::client_config_path(client) {
         Some(p) => p,
         None => {
-            eprintln!("{} Could not determine home directory.", "✗".red().bold());
+            eprintln!(
+                "{} Unsupported client {}. Supported: {}, {}, {}.",
+                "✗".red().bold(),
+                client.cyan(),
+                "claude-desktop".bold(),
+                "cursor".bold(),
+                "windsurf".bold()
+            );
             process::exit(1);
         }
     };
+    unlink_client(client, &config_path);
+}
 
+/// Removes Berth-managed server entries from a supported client config.
+fn unlink_client(client: &str, config_path: &Path) {
     if !config_path.exists() {
         println!(
-            "{} Claude Desktop config not found at {}.",
+            "{} {} config not found at {}.",
             "!".yellow().bold(),
+            client.cyan(),
             config_path.display()
         );
         return;
     }
 
-    let content = match fs::read_to_string(&config_path) {
+    let content = match fs::read_to_string(config_path) {
         Ok(c) => c,
         Err(e) => {
             eprintln!(
@@ -76,8 +73,8 @@ fn unlink_claude_desktop() {
         }
     };
 
-    let backup = backup_path(&config_path);
-    if let Err(e) = fs::copy(&config_path, &backup) {
+    let backup = backup_path(config_path);
+    if let Err(e) = fs::copy(config_path, &backup) {
         eprintln!(
             "{} Failed to create backup {}: {}",
             "✗".red().bold(),
@@ -119,7 +116,7 @@ fn unlink_claude_desktop() {
         }
     };
 
-    if let Err(e) = fs::write(&config_path, rendered) {
+    if let Err(e) = fs::write(config_path, rendered) {
         eprintln!(
             "{} Failed to write client config {}: {}",
             "✗".red().bold(),
@@ -133,14 +130,14 @@ fn unlink_claude_desktop() {
         println!(
             "{} No Berth-managed servers were present in {}.",
             "!".yellow().bold(),
-            "claude-desktop".cyan()
+            client.cyan()
         );
     } else {
         println!(
             "{} Unlinked {} server(s) from {}.",
             "✓".green().bold(),
             removed,
-            "claude-desktop".cyan()
+            client.cyan()
         );
     }
     println!("  Config: {}", config_path.display());

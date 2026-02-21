@@ -25,10 +25,14 @@ Config keys:
 
 - `berth.auto-restart` (`true` / `false`)
 - `berth.max-restarts` (positive integer)
+- `berth.sandbox` (`basic` / `off`)
+- `berth.sandbox-network` (`inherit` / `deny-all`)
 
 Example:
 
 ```bash
 berth config github --set berth.auto-restart=true
 berth config github --set berth.max-restarts=3
+berth config github --set berth.sandbox=basic
+berth config github --set berth.sandbox-network=inherit
 ```

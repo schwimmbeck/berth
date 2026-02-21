@@ -49,7 +49,8 @@ Expected behavior: process can launch, but `GITHUB_TOKEN` is filtered out from t
 ### 2. Block all network access
 
 ```bash
-berth permissions github --revoke network:*
+berth config github --set berth.sandbox=basic
+berth config github --set berth.sandbox-network=deny-all
 berth start github
 ```
 

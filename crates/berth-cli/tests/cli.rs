@@ -639,6 +639,30 @@ fn config_set_runtime_policy_keys_updates_value() {
 }
 
 #[test]
+fn config_set_sandbox_policy_keys_updates_value() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+
+    let out1 = berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "berth.sandbox=basic"])
+        .output()
+        .unwrap();
+    assert!(out1.status.success());
+    let out2 = berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "berth.sandbox-network=inherit"])
+        .output()
+        .unwrap();
+    assert!(out2.status.success());
+
+    let config = std::fs::read_to_string(tmp.path().join(".berth/servers/github.toml")).unwrap();
+    assert!(config.contains("\"berth.sandbox\" = \"basic\""));
+    assert!(config.contains("\"berth.sandbox-network\" = \"inherit\""));
+}
+
+#[test]
 fn config_env_shows_variables() {
     let tmp = tempfile::tempdir().unwrap();
     berth_with_home(tmp.path())
@@ -750,6 +774,48 @@ fn start_requires_config_before_running() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("Missing required config"));
+}
+
+#[test]
+fn start_blocks_when_sandbox_network_deny_all_and_audits() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "token=abc123"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "berth.sandbox=basic"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args([
+            "config",
+            "github",
+            "--set",
+            "berth.sandbox-network=deny-all",
+        ])
+        .output()
+        .unwrap();
+
+    let start = berth_with_home(tmp.path())
+        .args(["start", "github"])
+        .output()
+        .unwrap();
+    assert!(!start.status.success());
+    let stderr = String::from_utf8_lossy(&start.stderr);
+    assert!(stderr.contains("blocked by sandbox policy"));
+
+    let audit = berth_with_home(tmp.path())
+        .args(["audit", "github"])
+        .output()
+        .unwrap();
+    assert!(audit.status.success());
+    let audit_out = String::from_utf8_lossy(&audit.stdout);
+    assert!(audit_out.contains("permission-network-denied"));
 }
 
 #[test]

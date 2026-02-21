@@ -4,6 +4,7 @@ mod commands;
 pub mod paths;
 pub mod permission_filter;
 pub mod runtime_policy;
+pub mod sandbox_policy;
 
 use clap::Parser;
 use commands::Commands;

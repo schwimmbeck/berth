@@ -93,16 +93,19 @@ Permission override formats:
 - `network:<host>:<port>` (examples: `network:api.github.com:443`, `network:*:443`)
 - `network:*`
 
-Runtime policy config keys:
+Runtime and sandbox config keys:
 - `berth.auto-restart` (`true` or `false`)
 - `berth.max-restarts` (positive integer, default `3`)
+- `berth.sandbox` (`basic` or `off`)
+- `berth.sandbox-network` (`inherit` or `deny-all`)
 
 Security behavior examples:
 - Env secret filtering at launch:
   - `berth permissions github --revoke env:GITHUB_TOKEN`
   - `berth start github` (server starts without `GITHUB_TOKEN` exposed)
 - Network hard block:
-  - `berth permissions github --revoke network:*`
+  - `berth config github --set berth.sandbox=basic`
+  - `berth config github --set berth.sandbox-network=deny-all`
   - `berth start github` (blocked with exit code `1`)
 - Audit export for review:
   - `berth audit github --since 24h --json --export audit.json`

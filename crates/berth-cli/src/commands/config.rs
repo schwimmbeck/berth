@@ -15,6 +15,10 @@ use crate::runtime_policy::{
     is_runtime_policy_key, parse_runtime_policy, validate_runtime_policy_value, KEY_AUTO_RESTART,
     KEY_MAX_RESTARTS,
 };
+use crate::sandbox_policy::{
+    is_sandbox_policy_key, parse_sandbox_policy, validate_sandbox_policy_value, KEY_SANDBOX,
+    KEY_SANDBOX_NETWORK,
+};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -178,6 +182,29 @@ fn show_config(server: &str, config_path: &std::path::Path) {
         );
     }
 
+    if let Ok(policy) = parse_sandbox_policy(&installed.config) {
+        println!();
+        println!("  {}", "Sandbox:".bold());
+        println!(
+            "    {:<24} [{}]",
+            KEY_SANDBOX,
+            if policy.enabled {
+                "basic".green().to_string()
+            } else {
+                "off".dimmed().to_string()
+            }
+        );
+        println!(
+            "    {:<24} [{}]",
+            KEY_SANDBOX_NETWORK,
+            if policy.network_deny_all {
+                "deny-all".yellow().to_string()
+            } else {
+                "inherit".dimmed().to_string()
+            }
+        );
+    }
+
     println!();
 }
 
@@ -221,6 +248,7 @@ fn set_config(server: &str, kv: &str, config_path: &Path) {
             .optional_keys
             .contains(&key.to_string())
         || is_runtime_policy_key(key);
+    let is_known = is_known || is_sandbox_policy_key(key);
 
     if !is_known {
         eprintln!("{} Unknown config key: {}", "✗".red().bold(), key.cyan());
@@ -233,6 +261,8 @@ fn set_config(server: &str, kv: &str, config_path: &Path) {
             .collect();
         all_keys.push(KEY_AUTO_RESTART);
         all_keys.push(KEY_MAX_RESTARTS);
+        all_keys.push(KEY_SANDBOX);
+        all_keys.push(KEY_SANDBOX_NETWORK);
         all_keys.sort_unstable();
         eprintln!("  Known keys: {}", all_keys.join(", "));
         process::exit(1);
@@ -240,6 +270,12 @@ fn set_config(server: &str, kv: &str, config_path: &Path) {
 
     if is_runtime_policy_key(key) {
         if let Err(msg) = validate_runtime_policy_value(key, value) {
+            eprintln!("{} {}", "✗".red().bold(), msg);
+            process::exit(1);
+        }
+    }
+    if is_sandbox_policy_key(key) {
+        if let Err(msg) = validate_sandbox_policy_value(key, value) {
             eprintln!("{} {}", "✗".red().bold(), msg);
             process::exit(1);
         }

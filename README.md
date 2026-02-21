@@ -52,7 +52,7 @@ berth list
 | List installed MCP servers | Working | See what's installed and its status |
 | Install / uninstall / update MCP servers | Working | Install, remove, and update from the registry |
 | Configure MCP servers | Working | Set and view server configuration |
-| Start / stop / restart MCP servers | Working | Subprocess lifecycle controls with PID/state tracking |
+| Start / stop / restart MCP servers | Working | Subprocess lifecycle controls with PID/state tracking and optional bounded auto-restart policy |
 | MCP server health & status | Working | Runtime status with running/stopped/error plus PID and memory where available |
 | MCP server log streaming | Working | Tail lifecycle events from persisted server logs |
 | MCP proxy mode | Working | Transparent stdio proxy execution for configured servers |
@@ -92,6 +92,10 @@ Permission override formats:
 - `env:*`
 - `network:<host>:<port>` (examples: `network:api.github.com:443`, `network:*:443`)
 - `network:*`
+
+Runtime policy config keys:
+- `berth.auto-restart` (`true` or `false`)
+- `berth.max-restarts` (positive integer, default `3`)
 
 ## Supported MCP Servers (seed registry)
 

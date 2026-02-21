@@ -11,6 +11,10 @@ use berth_registry::config::InstalledServer;
 use berth_registry::Registry;
 
 use crate::paths;
+use crate::runtime_policy::{
+    is_runtime_policy_key, parse_runtime_policy, validate_runtime_policy_value, KEY_AUTO_RESTART,
+    KEY_MAX_RESTARTS,
+};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -155,6 +159,25 @@ fn show_config(server: &str, config_path: &std::path::Path) {
         }
     }
 
+    if let Ok(policy) = parse_runtime_policy(&installed.config) {
+        println!();
+        println!("  {}", "Runtime:".bold());
+        println!(
+            "    {:<24} [{}]",
+            KEY_AUTO_RESTART,
+            if policy.enabled {
+                "true".green().to_string()
+            } else {
+                "false".dimmed().to_string()
+            }
+        );
+        println!(
+            "    {:<24} [{}]",
+            KEY_MAX_RESTARTS,
+            format!("{}", policy.max_restarts).dimmed()
+        );
+    }
+
     println!();
 }
 
@@ -196,19 +219,30 @@ fn set_config(server: &str, kv: &str, config_path: &Path) {
         || installed
             .config_meta
             .optional_keys
-            .contains(&key.to_string());
+            .contains(&key.to_string())
+        || is_runtime_policy_key(key);
 
     if !is_known {
         eprintln!("{} Unknown config key: {}", "✗".red().bold(), key.cyan());
-        let all_keys: Vec<&str> = installed
+        let mut all_keys: Vec<&str> = installed
             .config_meta
             .required_keys
             .iter()
             .chain(installed.config_meta.optional_keys.iter())
             .map(|s| s.as_str())
             .collect();
+        all_keys.push(KEY_AUTO_RESTART);
+        all_keys.push(KEY_MAX_RESTARTS);
+        all_keys.sort_unstable();
         eprintln!("  Known keys: {}", all_keys.join(", "));
         process::exit(1);
+    }
+
+    if is_runtime_policy_key(key) {
+        if let Err(msg) = validate_runtime_policy_value(key, value) {
+            eprintln!("{} {}", "✗".red().bold(), msg);
+            process::exit(1);
+        }
     }
 
     installed.config.insert(key.to_string(), value.to_string());

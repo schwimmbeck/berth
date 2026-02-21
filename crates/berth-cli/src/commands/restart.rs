@@ -14,6 +14,7 @@ use crate::permission_filter::{
     filter_env_map, load_permission_overrides, validate_network_permissions,
     NETWORK_PERMISSION_DENIED_PREFIX,
 };
+use crate::runtime_policy::parse_runtime_policy;
 
 /// Executes the `berth restart` command.
 pub fn execute(server: &str) {
@@ -142,10 +143,12 @@ fn build_process_spec(
     let overrides = load_permission_overrides(name)?;
     validate_network_permissions(name, &installed.permissions.network, &overrides)?;
     filter_env_map(&mut env, &installed.permissions.env, &overrides);
+    let policy = parse_runtime_policy(&installed.config)?;
 
     Ok(ProcessSpec {
         command: installed.runtime.command.clone(),
         args: installed.runtime.args.clone(),
         env,
+        auto_restart: Some(policy),
     })
 }

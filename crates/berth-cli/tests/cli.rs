@@ -150,6 +150,101 @@ fn patch_runtime_to_print_env_var(tmp: &std::path::Path, server: &str, env_var: 
     std::fs::write(&config_path, rendered).unwrap();
 }
 
+fn patch_runtime_to_fail_once_then_run(tmp: &std::path::Path, server: &str) {
+    let config_path = tmp.join(".berth/servers").join(format!("{server}.toml"));
+    let marker = tmp
+        .join(".berth/runtime")
+        .join(format!("{server}.restart-flag"));
+    std::fs::create_dir_all(marker.parent().unwrap()).unwrap();
+
+    let content = std::fs::read_to_string(&config_path).unwrap();
+    let mut value: toml::Value = toml::from_str(&content).unwrap();
+    let runtime = value
+        .get_mut("runtime")
+        .and_then(toml::Value::as_table_mut)
+        .unwrap();
+
+    #[cfg(unix)]
+    {
+        let script = format!(
+            "if [ -f '{}' ]; then sleep 60; else touch '{}'; exit 1; fi",
+            marker.display(),
+            marker.display()
+        );
+        runtime.insert("command".to_string(), toml::Value::String("sh".to_string()));
+        runtime.insert(
+            "args".to_string(),
+            toml::Value::Array(vec![
+                toml::Value::String("-c".to_string()),
+                toml::Value::String(script),
+            ]),
+        );
+    }
+
+    #[cfg(windows)]
+    {
+        let script = format!(
+            "if exist \"{}\" (timeout /T 60 /NOBREAK >NUL) else (type nul > \"{}\" & exit /B 1)",
+            marker.display(),
+            marker.display()
+        );
+        runtime.insert(
+            "command".to_string(),
+            toml::Value::String("cmd".to_string()),
+        );
+        runtime.insert(
+            "args".to_string(),
+            toml::Value::Array(vec![
+                toml::Value::String("/C".to_string()),
+                toml::Value::String(script),
+            ]),
+        );
+    }
+
+    let rendered = toml::to_string_pretty(&value).unwrap();
+    std::fs::write(&config_path, rendered).unwrap();
+}
+
+fn patch_runtime_to_fail_immediately(tmp: &std::path::Path, server: &str) {
+    let config_path = tmp.join(".berth/servers").join(format!("{server}.toml"));
+    let content = std::fs::read_to_string(&config_path).unwrap();
+    let mut value: toml::Value = toml::from_str(&content).unwrap();
+    let runtime = value
+        .get_mut("runtime")
+        .and_then(toml::Value::as_table_mut)
+        .unwrap();
+
+    #[cfg(unix)]
+    {
+        runtime.insert("command".to_string(), toml::Value::String("sh".to_string()));
+        runtime.insert(
+            "args".to_string(),
+            toml::Value::Array(vec![
+                toml::Value::String("-c".to_string()),
+                toml::Value::String("exit 1".to_string()),
+            ]),
+        );
+    }
+
+    #[cfg(windows)]
+    {
+        runtime.insert(
+            "command".to_string(),
+            toml::Value::String("cmd".to_string()),
+        );
+        runtime.insert(
+            "args".to_string(),
+            toml::Value::Array(vec![
+                toml::Value::String("/C".to_string()),
+                toml::Value::String("exit /B 1".to_string()),
+            ]),
+        );
+    }
+
+    let rendered = toml::to_string_pretty(&value).unwrap();
+    std::fs::write(&config_path, rendered).unwrap();
+}
+
 // --- search ---
 
 #[test]
@@ -437,6 +532,30 @@ fn config_set_unknown_key_exits_1() {
 }
 
 #[test]
+fn config_set_runtime_policy_keys_updates_value() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+
+    let out1 = berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "berth.auto-restart=true"])
+        .output()
+        .unwrap();
+    assert!(out1.status.success());
+    let out2 = berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "berth.max-restarts=2"])
+        .output()
+        .unwrap();
+    assert!(out2.status.success());
+
+    let config = std::fs::read_to_string(tmp.path().join(".berth/servers/github.toml")).unwrap();
+    assert!(config.contains("\"berth.auto-restart\" = \"true\""));
+    assert!(config.contains("\"berth.max-restarts\" = \"2\""));
+}
+
+#[test]
 fn config_env_shows_variables() {
     let tmp = tempfile::tempdir().unwrap();
     berth_with_home(tmp.path())
@@ -689,6 +808,96 @@ fn restart_sets_running_state() {
         .unwrap();
     let stdout = String::from_utf8_lossy(&status.stdout);
     assert!(stdout.contains("running"));
+}
+
+#[test]
+fn status_auto_restart_recovers_crash_when_enabled() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "token=abc123"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "berth.auto-restart=true"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "berth.max-restarts=1"])
+        .output()
+        .unwrap();
+    patch_runtime_to_fail_once_then_run(tmp.path(), "github");
+
+    berth_with_home(tmp.path())
+        .args(["start", "github"])
+        .output()
+        .unwrap();
+
+    let status = berth_with_home(tmp.path())
+        .args(["status"])
+        .output()
+        .unwrap();
+    assert!(status.status.success());
+    let stdout = String::from_utf8_lossy(&status.stdout);
+    assert!(stdout.contains("running"));
+
+    let audit = berth_with_home(tmp.path())
+        .args(["audit", "github", "--action", "auto-restart"])
+        .output()
+        .unwrap();
+    assert!(audit.status.success());
+    let audit_out = String::from_utf8_lossy(&audit.stdout);
+    assert!(audit_out.contains("auto-restart"));
+}
+
+#[test]
+fn auto_restart_respects_max_restarts_setting() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "token=abc123"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "berth.auto-restart=true"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "berth.max-restarts=1"])
+        .output()
+        .unwrap();
+    patch_runtime_to_fail_immediately(tmp.path(), "github");
+
+    berth_with_home(tmp.path())
+        .args(["start", "github"])
+        .output()
+        .unwrap();
+    let _ = berth_with_home(tmp.path())
+        .args(["status"])
+        .output()
+        .unwrap();
+    let _ = berth_with_home(tmp.path())
+        .args(["status"])
+        .output()
+        .unwrap();
+
+    let audit = berth_with_home(tmp.path())
+        .args(["audit", "github", "--action", "auto-restart"])
+        .output()
+        .unwrap();
+    assert!(audit.status.success());
+    let audit_out = String::from_utf8_lossy(&audit.stdout);
+    let count = audit_out
+        .lines()
+        .filter(|l| l.trim_start().starts_with("auto-restart"))
+        .count();
+    assert_eq!(count, 1);
 }
 
 #[test]

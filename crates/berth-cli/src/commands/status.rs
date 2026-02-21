@@ -2,14 +2,20 @@
 
 use colored::Colorize;
 use serde::Deserialize;
+use std::collections::BTreeMap;
 use std::fs;
 use std::process;
 use std::process::Command;
 
 use berth_registry::config::InstalledServer;
-use berth_runtime::{RuntimeManager, ServerStatus};
+use berth_registry::Registry;
+use berth_runtime::{ProcessSpec, RuntimeManager, ServerStatus};
 
 use crate::paths;
+use crate::permission_filter::{
+    filter_env_map, load_permission_overrides, validate_network_permissions,
+};
+use crate::runtime_policy::parse_runtime_policy;
 
 #[derive(Debug, Deserialize)]
 struct RuntimeStateSnapshot {
@@ -64,6 +70,7 @@ pub fn execute() {
         }
     };
     let runtime = RuntimeManager::new(berth_home);
+    let registry = Registry::from_seed();
 
     println!("{} MCP server status:\n", "✓".green().bold());
     println!(
@@ -85,21 +92,49 @@ pub fn execute() {
             .to_string_lossy()
             .to_string();
 
-        let version = match fs::read_to_string(&path) {
+        let installed = match fs::read_to_string(&path) {
             Ok(content) => match toml::from_str::<InstalledServer>(&content) {
-                Ok(installed) => installed.server.version,
+                Ok(installed) => installed,
                 Err(_) => {
                     had_error = true;
-                    "?".to_string()
+                    println!(
+                        "  {:<20} {:<12} {:<12} {:<8} {:<12}",
+                        name.cyan(),
+                        "?",
+                        "error".red(),
+                        "-",
+                        "-"
+                    );
+                    continue;
                 }
             },
             Err(_) => {
                 had_error = true;
-                "?".to_string()
+                println!(
+                    "  {:<20} {:<12} {:<12} {:<8} {:<12}",
+                    name.cyan(),
+                    "?",
+                    "error".red(),
+                    "-",
+                    "-"
+                );
+                continue;
+            }
+        };
+        let version = installed.server.version.clone();
+
+        let spec = match build_process_spec(&name, &installed, &registry) {
+            Ok(spec) => Some(spec),
+            Err(_) => {
+                had_error = true;
+                None
             }
         };
 
-        let (status_display, pid_display, memory_display) = match runtime.status(&name) {
+        let (status_display, pid_display, memory_display) = match spec.as_ref().map_or_else(
+            || runtime.status(&name),
+            |s| runtime.status_with_spec(&name, Some(s)),
+        ) {
             Ok(ServerStatus::Running) => {
                 let pid = read_runtime_pid(&name);
                 let pid_display = pid
@@ -136,6 +171,44 @@ pub fn execute() {
     if had_error {
         process::exit(1);
     }
+}
+
+/// Builds a runtime process spec from installed metadata and config values.
+fn build_process_spec(
+    name: &str,
+    installed: &InstalledServer,
+    registry: &Registry,
+) -> Result<ProcessSpec, String> {
+    let mut env = BTreeMap::new();
+
+    if let Some(meta) = registry.get(name) {
+        for field in meta
+            .config
+            .required
+            .iter()
+            .chain(meta.config.optional.iter())
+        {
+            if let Some(env_var) = &field.env {
+                if let Some(value) = installed.config.get(&field.key) {
+                    if !value.trim().is_empty() {
+                        env.insert(env_var.clone(), value.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    let overrides = load_permission_overrides(name)?;
+    validate_network_permissions(name, &installed.permissions.network, &overrides)?;
+    filter_env_map(&mut env, &installed.permissions.env, &overrides);
+    let policy = parse_runtime_policy(&installed.config)?;
+
+    Ok(ProcessSpec {
+        command: installed.runtime.command.clone(),
+        args: installed.runtime.args.clone(),
+        env,
+        auto_restart: Some(policy),
+    })
 }
 
 /// Reads the persisted runtime PID for a server, if present.

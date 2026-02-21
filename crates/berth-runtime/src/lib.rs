@@ -51,6 +51,14 @@ pub struct ProcessSpec {
     pub command: String,
     pub args: Vec<String>,
     pub env: BTreeMap<String, String>,
+    pub auto_restart: Option<AutoRestartPolicy>,
+}
+
+/// Auto-restart policy applied to supervised server processes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AutoRestartPolicy {
+    pub enabled: bool,
+    pub max_restarts: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -63,6 +71,12 @@ struct RuntimeState {
     command: Option<String>,
     #[serde(default)]
     args: Vec<String>,
+    #[serde(default)]
+    auto_restart_enabled: bool,
+    #[serde(default)]
+    max_restarts: u32,
+    #[serde(default)]
+    restart_attempts: u32,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -87,6 +101,9 @@ impl Default for RuntimeState {
             pid: None,
             command: None,
             args: Vec::new(),
+            auto_restart_enabled: false,
+            max_restarts: 0,
+            restart_attempts: 0,
         }
     }
 }
@@ -105,6 +122,15 @@ impl RuntimeManager {
 
     /// Returns current persisted status for a server.
     pub fn status(&self, server: &str) -> io::Result<ServerStatus> {
+        self.status_with_spec(server, None)
+    }
+
+    /// Returns current persisted status for a server with optional restart spec.
+    pub fn status_with_spec(
+        &self,
+        server: &str,
+        spec: Option<&ProcessSpec>,
+    ) -> io::Result<ServerStatus> {
         let mut state = self.read_state(server)?;
 
         if state.status == ServerStatus::Running {
@@ -118,6 +144,7 @@ impl RuntimeManager {
                 }
             }
 
+            // Record that a previously running process exited.
             state.status = ServerStatus::Stopped;
             state.pid = None;
             state.updated_at_epoch_secs = now_epoch_secs();
@@ -135,6 +162,52 @@ impl RuntimeManager {
                     Some(old_args)
                 },
             })?;
+
+            // Attempt bounded auto-restart when policy is enabled.
+            if state.auto_restart_enabled && state.restart_attempts < state.max_restarts {
+                if let Some(spec) = spec {
+                    let child = Command::new(&spec.command)
+                        .args(&spec.args)
+                        .envs(&spec.env)
+                        .stdin(Stdio::null())
+                        .stdout(Stdio::from(self.open_log_append(server)?))
+                        .stderr(Stdio::from(self.open_log_append(server)?))
+                        .spawn()
+                        .map_err(|e| {
+                            io::Error::new(e.kind(), format!("failed to spawn process: {e}"))
+                        })?;
+                    let pid = child.id();
+                    drop(child);
+
+                    state.status = ServerStatus::Running;
+                    state.pid = Some(pid);
+                    state.command = Some(spec.command.clone());
+                    state.args = spec.args.clone();
+                    state.restart_attempts += 1;
+                    state.updated_at_epoch_secs = now_epoch_secs();
+                    self.write_state(server, &state)?;
+                    self.append_log(
+                        server,
+                        &format!(
+                            "AUTO_RESTART pid={pid} attempt={}/{}",
+                            state.restart_attempts, state.max_restarts
+                        ),
+                    )?;
+                    self.append_audit_event(AuditEvent {
+                        timestamp_epoch_secs: now_epoch_secs(),
+                        server: server.to_string(),
+                        action: "auto-restart".to_string(),
+                        pid: Some(pid),
+                        command: Some(spec.command.clone()),
+                        args: if spec.args.is_empty() {
+                            None
+                        } else {
+                            Some(spec.args.clone())
+                        },
+                    })?;
+                    return Ok(ServerStatus::Running);
+                }
+            }
         }
 
         Ok(ServerStatus::Stopped)
@@ -181,6 +254,9 @@ impl RuntimeManager {
         state.pid = Some(pid);
         state.command = Some(spec.command.clone());
         state.args = spec.args.clone();
+        state.auto_restart_enabled = spec.auto_restart.map(|p| p.enabled).unwrap_or(false);
+        state.max_restarts = spec.auto_restart.map(|p| p.max_restarts).unwrap_or(0);
+        state.restart_attempts = 0;
         state.updated_at_epoch_secs = now_epoch_secs();
         self.write_state(server, &state)?;
         self.append_log(server, &format!("START pid={pid}"))?;
@@ -218,6 +294,7 @@ impl RuntimeManager {
 
         state.status = ServerStatus::Stopped;
         state.pid = None;
+        state.restart_attempts = 0;
         state.updated_at_epoch_secs = now_epoch_secs();
         self.write_state(server, &state)?;
         self.append_log(server, "STOP")?;
@@ -392,9 +469,28 @@ fn now_epoch_secs() -> u64 {
 /// Returns whether a process is currently alive.
 #[cfg(unix)]
 fn process_is_alive(pid: u32) -> bool {
+    let pid_str = pid.to_string();
+    if let Ok(out) = Command::new("ps")
+        .args(["-o", "stat=", "-p", &pid_str])
+        .output()
+    {
+        if !out.status.success() {
+            return false;
+        }
+        let stat = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if stat.is_empty() {
+            return false;
+        }
+        // Zombie processes are dead for supervision purposes.
+        if stat.starts_with('Z') {
+            return false;
+        }
+        return true;
+    }
+
     Command::new("kill")
         .arg("-0")
-        .arg(pid.to_string())
+        .arg(&pid_str)
         .status()
         .is_ok_and(|s| s.success())
 }
@@ -461,11 +557,23 @@ fn terminate_process(_pid: u32) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::thread;
+    use std::time::Duration;
 
     fn manager() -> (tempfile::TempDir, RuntimeManager) {
         let tmp = tempfile::tempdir().unwrap();
         let manager = RuntimeManager::new(tmp.path().join(".berth"));
         (tmp, manager)
+    }
+
+    fn wait_until_process_exits(manager: &RuntimeManager, server: &str) {
+        for _ in 0..100 {
+            let state = manager.read_state(server).unwrap();
+            match state.pid {
+                Some(pid) if process_is_alive(pid) => thread::sleep(Duration::from_millis(20)),
+                _ => return,
+            }
+        }
     }
 
     #[cfg(unix)]
@@ -474,6 +582,7 @@ mod tests {
             command: "sh".to_string(),
             args: vec!["-c".to_string(), "sleep 60".to_string()],
             env: BTreeMap::new(),
+            auto_restart: None,
         }
     }
 
@@ -489,6 +598,7 @@ mod tests {
                 "/NOBREAK".to_string(),
             ],
             env: BTreeMap::new(),
+            auto_restart: None,
         }
     }
 
@@ -498,6 +608,46 @@ mod tests {
             command: "unsupported".to_string(),
             args: vec![],
             env: BTreeMap::new(),
+            auto_restart: None,
+        }
+    }
+
+    #[cfg(unix)]
+    fn crash_spec_with_policy(max_restarts: u32) -> ProcessSpec {
+        ProcessSpec {
+            command: "sh".to_string(),
+            args: vec!["-c".to_string(), "exit 1".to_string()],
+            env: BTreeMap::new(),
+            auto_restart: Some(AutoRestartPolicy {
+                enabled: true,
+                max_restarts,
+            }),
+        }
+    }
+
+    #[cfg(windows)]
+    fn crash_spec_with_policy(max_restarts: u32) -> ProcessSpec {
+        ProcessSpec {
+            command: "cmd".to_string(),
+            args: vec!["/C".to_string(), "exit /B 1".to_string()],
+            env: BTreeMap::new(),
+            auto_restart: Some(AutoRestartPolicy {
+                enabled: true,
+                max_restarts,
+            }),
+        }
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    fn crash_spec_with_policy(max_restarts: u32) -> ProcessSpec {
+        ProcessSpec {
+            command: "unsupported".to_string(),
+            args: vec![],
+            env: BTreeMap::new(),
+            auto_restart: Some(AutoRestartPolicy {
+                enabled: true,
+                max_restarts,
+            }),
         }
     }
 
@@ -597,5 +747,41 @@ mod tests {
 
         let err = manager.status("github").unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn status_with_spec_auto_restarts_crashed_process() {
+        let (_tmp, manager) = manager();
+        let crash = crash_spec_with_policy(1);
+        let recover = long_running_spec();
+        manager.start("github", &crash).unwrap();
+        wait_until_process_exits(&manager, "github");
+
+        let status = manager.status_with_spec("github", Some(&recover)).unwrap();
+        assert_eq!(status, ServerStatus::Running);
+
+        let audit = fs::read_to_string(manager.audit_log_path()).unwrap();
+        assert!(audit.contains("\"action\":\"auto-restart\""));
+        let _ = manager.stop("github");
+    }
+
+    #[test]
+    fn auto_restart_respects_max_restarts_bound() {
+        let (_tmp, manager) = manager();
+        let crash = crash_spec_with_policy(1);
+        manager.start("github", &crash).unwrap();
+        wait_until_process_exits(&manager, "github");
+
+        let _ = manager.status_with_spec("github", Some(&crash)).unwrap();
+        wait_until_process_exits(&manager, "github");
+        let second = manager.status_with_spec("github", Some(&crash)).unwrap();
+        assert_eq!(second, ServerStatus::Stopped);
+
+        let audit = fs::read_to_string(manager.audit_log_path()).unwrap();
+        let count = audit
+            .lines()
+            .filter(|l| l.contains("\"action\":\"auto-restart\""))
+            .count();
+        assert_eq!(count, 1);
     }
 }

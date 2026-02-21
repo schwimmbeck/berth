@@ -199,5 +199,6 @@ fn build_process_spec(
         command: installed.runtime.command.clone(),
         args: installed.runtime.args.clone(),
         env,
+        auto_restart: None,
     })
 }

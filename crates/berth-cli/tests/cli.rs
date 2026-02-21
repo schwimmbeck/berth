@@ -615,7 +615,7 @@ fn registry_api_serves_health_search_and_downloads() {
             "--bind",
             "127.0.0.1:0",
             "--max-requests",
-            "33",
+            "34",
         ])
         .stdout(Stdio::piped())
         .spawn()
@@ -818,7 +818,7 @@ fn registry_api_serves_health_search_and_downloads() {
     let (update_submission_status, update_submission_body) = http_post_json(
         &addr,
         "/publish/submissions/github-200.json/status",
-        "{\"status\":\"approved\"}",
+        "{\"status\":\"approved\",\"note\":\"quality checks passed\"}",
     );
     assert_eq!(update_submission_status, 200);
     let updated_submission: serde_json::Value =
@@ -827,6 +827,20 @@ fn registry_api_serves_health_search_and_downloads() {
     assert_eq!(
         updated_submission["submission"]["status"].as_str(),
         Some("approved")
+    );
+
+    let (updated_submission_detail_status, updated_submission_detail_body) =
+        http_get(&addr, "/publish/submissions/github-200.json");
+    assert_eq!(updated_submission_detail_status, 200);
+    let updated_submission_detail: serde_json::Value =
+        serde_json::from_str(&updated_submission_detail_body).unwrap();
+    assert_eq!(
+        updated_submission_detail["submission"]["reviewHistory"][0]["status"].as_str(),
+        Some("approved")
+    );
+    assert_eq!(
+        updated_submission_detail["submission"]["reviewHistory"][0]["note"].as_str(),
+        Some("quality checks passed")
     );
 
     let (approved_submissions_status, approved_submissions_body) = http_get(
@@ -873,6 +887,8 @@ fn registry_api_serves_health_search_and_downloads() {
     assert_eq!(site_submission_detail_status, 200);
     assert!(site_submission_detail_body.contains("Submission Detail"));
     assert!(site_submission_detail_body.contains("Manifest Payload"));
+    assert!(site_submission_detail_body.contains("Review History"));
+    assert!(site_submission_detail_body.contains("quality checks passed"));
 
     let (site_detail_after_status, _site_detail_after_headers, site_detail_after_body) =
         http_get_with_headers(&addr, "/site/servers/github");

@@ -171,6 +171,8 @@ struct QueueQualityCheck {
 #[derive(Debug, Deserialize)]
 struct PublishSubmissionStatusPayload {
     status: String,
+    #[serde(default)]
+    note: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -427,6 +429,7 @@ impl ApiState {
         &self,
         submission_id: &str,
         status: &str,
+        note: Option<&str>,
     ) -> Result<Option<PublishSubmissionSummary>, String> {
         if !is_safe_submission_id(submission_id) {
             return Err("invalid submission id".to_string());
@@ -440,8 +443,27 @@ impl ApiState {
             .map_err(|e| format!("failed to read queue file {}: {e}", path.display()))?;
         let mut value = serde_json::from_str::<Value>(&content)
             .map_err(|e| format!("failed to parse queue file {}: {e}", path.display()))?;
+        let timestamp = now_epoch_secs();
         value["status"] = Value::String(status.to_string());
-        value["reviewedAtEpochSecs"] = json!(now_epoch_secs());
+        value["reviewedAtEpochSecs"] = json!(timestamp);
+
+        if value
+            .get("reviewHistory")
+            .and_then(Value::as_array)
+            .is_none()
+        {
+            value["reviewHistory"] = Value::Array(Vec::new());
+        }
+        if let Some(history) = value["reviewHistory"].as_array_mut() {
+            let mut event = json!({
+                "timestampEpochSecs": timestamp,
+                "status": status
+            });
+            if let Some(note) = note.map(str::trim).filter(|value| !value.is_empty()) {
+                event["note"] = Value::String(note.to_string());
+            }
+            history.push(event);
+        }
 
         let payload = serde_json::to_string_pretty(&value)
             .map_err(|e| format!("failed to serialize queue file {}: {e}", path.display()))?;
@@ -1475,6 +1497,41 @@ fn render_site_submission_detail_page(submission_id: &str, state: &ApiState) -> 
                 marker,
                 html_escape(detail)
             ));
+            content.push_str("</li>");
+        }
+        content.push_str("</ul>");
+    }
+    content.push_str("</section>");
+
+    content.push_str("<section class=\"panel\">");
+    content.push_str("<h2>Review History</h2>");
+    let review_history = submission["reviewHistory"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    if review_history.is_empty() {
+        content.push_str("<p class=\"empty\">No review actions recorded yet.</p>");
+    } else {
+        content.push_str("<ul class=\"related-list\">");
+        for event in review_history {
+            let status = event["status"].as_str().unwrap_or("unknown");
+            let timestamp = event["timestampEpochSecs"].as_u64().unwrap_or(0);
+            let note = event["note"].as_str().unwrap_or_default();
+            content.push_str("<li>");
+            if note.is_empty() {
+                content.push_str(&format!(
+                    "<span class=\"meta\">status {} · epoch {}</span>",
+                    html_escape(status),
+                    timestamp
+                ));
+            } else {
+                content.push_str(&format!(
+                    "<span class=\"meta\">status {} · epoch {}</span><p>{}</p>",
+                    html_escape(status),
+                    timestamp,
+                    html_escape(note)
+                ));
+            }
             content.push_str("</li>");
         }
         content.push_str("</ul>");
@@ -3007,12 +3064,12 @@ fn route_update_publish_submission_status(
             }),
         );
     }
-    let status = match parse_publish_submission_status_body(body) {
-        Ok(status) => status,
+    let (status, note) = match parse_publish_submission_status_body(body) {
+        Ok(value) => value,
         Err(error) => return error,
     };
 
-    match state.set_publish_submission_status(&submission_id, &status) {
+    match state.set_publish_submission_status(&submission_id, &status, note.as_deref()) {
         Ok(Some(submission)) => (
             200,
             json!({
@@ -3378,7 +3435,9 @@ fn parse_publisher_body(body: &str) -> Result<String, (u16, Value)> {
     Ok(normalized)
 }
 
-fn parse_publish_submission_status_body(body: &str) -> Result<String, (u16, Value)> {
+fn parse_publish_submission_status_body(
+    body: &str,
+) -> Result<(String, Option<String>), (u16, Value)> {
     let payload = if body.trim().is_empty() {
         return Err((
             400,
@@ -3410,7 +3469,13 @@ fn parse_publish_submission_status_body(body: &str) -> Result<String, (u16, Valu
             }),
         ));
     }
-    Ok(normalized)
+    let note = payload.note.trim();
+    let note = if note.is_empty() {
+        None
+    } else {
+        Some(note.to_string())
+    };
+    Ok((normalized, note))
 }
 
 fn is_valid_submission_status(status: &str) -> bool {
@@ -4873,7 +4938,7 @@ mod tests {
         let update_request = HttpRequest {
             method: "POST".to_string(),
             target: "/publish/submissions/github-500.json/status".to_string(),
-            body: "{\"status\":\"approved\"}".to_string(),
+            body: "{\"status\":\"approved\",\"note\":\"looks good\"}".to_string(),
         };
         let (update_status, update_body) = route_request(&update_request, &registry, &state);
         assert_eq!(update_status, 200);
@@ -4894,6 +4959,21 @@ mod tests {
         );
         assert_eq!(approved_status, 200);
         assert_eq!(approved_body["total"].as_u64(), Some(1));
+
+        let (detail_status, detail_body) = route_request(
+            &req("GET", "/publish/submissions/github-500.json"),
+            &registry,
+            &state,
+        );
+        assert_eq!(detail_status, 200);
+        assert_eq!(
+            detail_body["submission"]["reviewHistory"][0]["status"].as_str(),
+            Some("approved")
+        );
+        assert_eq!(
+            detail_body["submission"]["reviewHistory"][0]["note"].as_str(),
+            Some("looks good")
+        );
 
         let invalid_request = HttpRequest {
             method: "POST".to_string(),

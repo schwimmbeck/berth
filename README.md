@@ -120,7 +120,7 @@ Registry API endpoints:
 - `GET /reports?server=<name>&reason=<reason>&offset=<n>&limit=<n>`
 - `GET /publish/submissions?status=<status>&server=<name>&offset=<n>&limit=<n>`
 - `GET /publish/submissions/<id>`
-- `POST /publish/submissions/<id>/status`
+- `POST /publish/submissions/<id>/status` (JSON body: `status`, optional `note`)
 - `POST /servers/<name>/star`
 - `POST /servers/<name>/report`
 - `GET /publishers/verified`

@@ -62,7 +62,7 @@ berth list
 | List installed MCP servers | Working | See what's installed and its status |
 | Install / uninstall / update MCP servers | Working | Install, remove, and update from the registry |
 | Configure MCP servers | Working | Set and view server configuration |
-| Start / stop / restart MCP servers | Working | Subprocess lifecycle controls with PID/state tracking and optional bounded auto-restart policy |
+| Start / stop / restart MCP servers | Working | Subprocess lifecycle controls with PID/state tracking, graceful-first shutdown, and optional bounded auto-restart policy |
 | MCP server health & status | Working | Runtime status with running/stopped/error plus PID and memory where available |
 | MCP server log streaming | Working | Tail lifecycle events from persisted server logs |
 | MCP proxy mode | Working | Transparent stdio proxy execution for configured servers |

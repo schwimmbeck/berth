@@ -10,6 +10,9 @@ berth stop github
 berth restart github
 ```
 
+Stop behavior is graceful-first: Berth sends a normal termination signal, waits briefly for exit,
+and escalates to force termination only when needed.
+
 ## Status and Logs
 
 ```bash

@@ -7,7 +7,8 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Returns crate version for runtime diagnostics/tests.
 pub fn version() -> &'static str {
@@ -518,13 +519,27 @@ fn process_is_alive(_pid: u32) -> bool {
 /// Sends a termination signal to a process.
 #[cfg(unix)]
 fn terminate_process(pid: u32) -> io::Result<()> {
-    let status = Command::new("kill").arg(pid.to_string()).status()?;
-    if status.success() {
+    let pid_str = pid.to_string();
+    let status = Command::new("kill").arg(&pid_str).status()?;
+    if !status.success() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("failed to signal process {pid}"),
+        ));
+    }
+
+    if wait_for_process_exit(pid, 50, Duration::from_millis(20)) {
+        return Ok(());
+    }
+
+    // Escalate if the process does not exit after TERM.
+    let kill_status = Command::new("kill").args(["-9", &pid_str]).status()?;
+    if kill_status.success() {
         Ok(())
     } else {
         Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
-            format!("failed to signal process {pid}"),
+            format!("failed to force terminate process {pid}"),
         ))
     }
 }
@@ -532,15 +547,30 @@ fn terminate_process(pid: u32) -> io::Result<()> {
 /// Sends a termination signal to a process.
 #[cfg(windows)]
 fn terminate_process(pid: u32) -> io::Result<()> {
+    // Try graceful shutdown first, then force-kill if needed.
     let status = Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T"])
+        .status()?;
+    if !status.success() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("failed to terminate process {pid}"),
+        ));
+    }
+
+    if wait_for_process_exit(pid, 50, Duration::from_millis(20)) {
+        return Ok(());
+    }
+
+    let force_status = Command::new("taskkill")
         .args(["/PID", &pid.to_string(), "/T", "/F"])
         .status()?;
-    if status.success() {
+    if force_status.success() {
         Ok(())
     } else {
         Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
-            format!("failed to terminate process {pid}"),
+            format!("failed to force terminate process {pid}"),
         ))
     }
 }
@@ -552,6 +582,17 @@ fn terminate_process(_pid: u32) -> io::Result<()> {
         io::ErrorKind::Unsupported,
         "process termination is not supported on this platform",
     ))
+}
+
+/// Waits for a process to exit, checking liveness repeatedly.
+fn wait_for_process_exit(pid: u32, attempts: u32, interval: Duration) -> bool {
+    for _ in 0..attempts {
+        if !process_is_alive(pid) {
+            return true;
+        }
+        thread::sleep(interval);
+    }
+    !process_is_alive(pid)
 }
 
 #[cfg(test)]
@@ -607,6 +648,19 @@ mod tests {
         ProcessSpec {
             command: "unsupported".to_string(),
             args: vec![],
+            env: BTreeMap::new(),
+            auto_restart: None,
+        }
+    }
+
+    #[cfg(unix)]
+    fn ignores_term_spec() -> ProcessSpec {
+        ProcessSpec {
+            command: "sh".to_string(),
+            args: vec![
+                "-c".to_string(),
+                "trap '' TERM; while true; do sleep 1; done".to_string(),
+            ],
             env: BTreeMap::new(),
             auto_restart: None,
         }
@@ -687,6 +741,17 @@ mod tests {
     fn stop_transitions_to_stopped() {
         let (_tmp, manager) = manager();
         let spec = long_running_spec();
+        manager.start("github", &spec).unwrap();
+        let outcome = manager.stop("github").unwrap();
+        assert_eq!(outcome, StopOutcome::Stopped);
+        assert_eq!(manager.status("github").unwrap(), ServerStatus::Stopped);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stop_escalates_when_process_ignores_term() {
+        let (_tmp, manager) = manager();
+        let spec = ignores_term_spec();
         manager.start("github", &spec).unwrap();
         let outcome = manager.stop("github").unwrap();
         assert_eq!(outcome, StopOutcome::Stopped);

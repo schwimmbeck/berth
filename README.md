@@ -131,6 +131,9 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 # Format
 cargo fmt --all
+
+# Build documentation site
+make docs
 ```
 
 ## Project Structure
@@ -138,6 +141,7 @@ cargo fmt --all
 ```
 berth/
   Cargo.toml                     # Workspace root
+  docs/                          # mdBook documentation source
   crates/
     berth-cli/                   # Binary crate (the `berth` command)
     berth-registry/              # MCP server registry client, types, search engine

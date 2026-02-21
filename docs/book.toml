@@ -1,0 +1,9 @@
+[book]
+authors = ["Berth Contributors"]
+language = "en"
+multilingual = false
+src = "src"
+title = "Berth Documentation"
+
+[build]
+build-dir = "book"

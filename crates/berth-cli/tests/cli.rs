@@ -59,6 +59,26 @@ fn http_post_json(addr: &str, path: &str, body: &str) -> (u16, String) {
     (status, body)
 }
 
+fn http_options(addr: &str, path: &str) -> (u16, String, String) {
+    let mut stream = TcpStream::connect(addr).unwrap();
+    let request = format!("OPTIONS {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n");
+    stream.write_all(request.as_bytes()).unwrap();
+
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    let first_line = response.lines().next().unwrap_or_default();
+    let status = first_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse::<u16>().ok())
+        .unwrap_or(0);
+    let (headers, body) = response
+        .split_once("\r\n\r\n")
+        .map(|(h, b)| (h.to_string(), b.to_string()))
+        .unwrap_or_default();
+    (status, headers, body)
+}
+
 fn write_registry_override(path: &std::path::Path, servers: serde_json::Value) {
     let rendered = serde_json::to_string_pretty(&servers).unwrap();
     std::fs::write(path, rendered).unwrap();
@@ -546,7 +566,7 @@ fn registry_api_serves_health_search_and_downloads() {
             "--bind",
             "127.0.0.1:0",
             "--max-requests",
-            "14",
+            "15",
         ])
         .stdout(Stdio::piped())
         .spawn()
@@ -657,6 +677,13 @@ fn registry_api_serves_health_search_and_downloads() {
         .find(|server| server["name"].as_str() == Some("github"))
         .unwrap();
     assert!(trending_github["trendScore"].as_u64().unwrap_or(0) > 0);
+
+    let (options_status, options_headers, options_body) = http_options(&addr, "/servers");
+    assert_eq!(options_status, 200);
+    assert!(options_headers.contains("Access-Control-Allow-Origin: *"));
+    assert!(options_headers.contains("Access-Control-Allow-Methods: GET, POST, OPTIONS"));
+    let options: serde_json::Value = serde_json::from_str(&options_body).unwrap();
+    assert_eq!(options["status"].as_str(), Some("ok"));
 
     let (verify_status, verify_body) = http_post_json(
         &addr,

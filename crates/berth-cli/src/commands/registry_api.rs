@@ -410,7 +410,7 @@ fn route_request(request: &HttpRequest, registry: &Registry, state: &ApiState) -
             }),
         );
     }
-    if !matches!(method, "GET" | "POST") {
+    if !matches!(method, "GET" | "POST" | "OPTIONS") {
         return (
             405,
             json!({
@@ -420,6 +420,16 @@ fn route_request(request: &HttpRequest, registry: &Registry, state: &ApiState) -
     }
 
     let (path, query) = split_path_query(target);
+    if method == "OPTIONS" {
+        return (
+            200,
+            json!({
+                "status": "ok",
+                "path": path,
+                "methods": ["GET", "POST", "OPTIONS"]
+            }),
+        );
+    }
     match path {
         "/" | "/health" => {
             if method != "GET" {
@@ -1450,7 +1460,7 @@ fn write_json_response(stream: &mut TcpStream, status: u16, body: &Value) -> io:
     let payload = serde_json::to_string(body)
         .unwrap_or_else(|_| "{\"error\":\"serialization failed\"}".to_string());
     let response = format!(
-        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\nAccess-Control-Max-Age: 86400\r\nConnection: close\r\n\r\n{}",
         payload.len(),
         payload
     );
@@ -1637,6 +1647,21 @@ mod tests {
             .find(|s| s["name"].as_str() == Some("github"))
             .unwrap();
         assert!(github["stars"].as_u64().unwrap_or(0) >= 2);
+    }
+
+    #[test]
+    fn route_request_supports_options_preflight() {
+        let registry = Registry::from_seed();
+        let state = test_state();
+        let (status, body) = route_request(&req("OPTIONS", "/servers"), &registry, &state);
+        assert_eq!(status, 200);
+        assert_eq!(body["status"].as_str(), Some("ok"));
+        assert_eq!(body["path"].as_str(), Some("/servers"));
+        assert!(body["methods"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m.as_str() == Some("OPTIONS")));
     }
 
     #[test]

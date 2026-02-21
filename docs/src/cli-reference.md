@@ -60,6 +60,7 @@ Registry API endpoints:
 - `GET /publishers/verified`
 - `POST /publishers/verify`
 - `POST /publishers/unverify`
+- `OPTIONS <endpoint>` for browser preflight (CORS)
 
 `GET /servers` and `GET /servers/<name>` responses include:
 - `maintainerVerified` + `badges`

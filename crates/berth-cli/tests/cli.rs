@@ -615,7 +615,7 @@ fn registry_api_serves_health_search_and_downloads() {
             "--bind",
             "127.0.0.1:0",
             "--max-requests",
-            "31",
+            "33",
         ])
         .stdout(Stdio::piped())
         .spawn()
@@ -804,6 +804,17 @@ fn registry_api_serves_health_search_and_downloads() {
         Some(1)
     );
 
+    let (submission_detail_status, submission_detail_body) =
+        http_get(&addr, "/publish/submissions/github-200.json");
+    assert_eq!(submission_detail_status, 200);
+    let submission_detail: serde_json::Value =
+        serde_json::from_str(&submission_detail_body).unwrap();
+    assert_eq!(submission_detail["id"].as_str(), Some("github-200.json"));
+    assert_eq!(
+        submission_detail["summary"]["server"]["name"].as_str(),
+        Some("github")
+    );
+
     let (update_submission_status, update_submission_body) = http_post_json(
         &addr,
         "/publish/submissions/github-200.json/status",
@@ -855,6 +866,13 @@ fn registry_api_serves_health_search_and_downloads() {
     assert!(site_submissions_approved_body.contains("approved"));
     assert!(site_submissions_approved_body.contains("/site/servers/github"));
     assert!(site_submissions_approved_body.contains("submission-status-btn"));
+    assert!(site_submissions_approved_body.contains("/site/submissions/github-200.json"));
+
+    let (site_submission_detail_status, _, site_submission_detail_body) =
+        http_get_with_headers(&addr, "/site/submissions/github-200.json");
+    assert_eq!(site_submission_detail_status, 200);
+    assert!(site_submission_detail_body.contains("Submission Detail"));
+    assert!(site_submission_detail_body.contains("Manifest Payload"));
 
     let (site_detail_after_status, _site_detail_after_headers, site_detail_after_body) =
         http_get_with_headers(&addr, "/site/servers/github");

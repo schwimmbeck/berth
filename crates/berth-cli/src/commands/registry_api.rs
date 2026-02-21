@@ -456,6 +456,28 @@ impl ApiState {
         )))
     }
 
+    fn get_publish_submission(
+        &self,
+        submission_id: &str,
+    ) -> Result<Option<(Value, PublishSubmissionSummary)>, String> {
+        if !is_safe_submission_id(submission_id) {
+            return Err("invalid submission id".to_string());
+        }
+        let path = self.publish_queue_dir().join(submission_id);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let content = fs::read_to_string(&path)
+            .map_err(|e| format!("failed to read queue file {}: {e}", path.display()))?;
+        let value = serde_json::from_str::<Value>(&content)
+            .map_err(|e| format!("failed to parse queue file {}: {e}", path.display()))?;
+        let normalized = serde_json::from_value::<QueueSubmissionFile>(value.clone())
+            .map_err(|e| format!("failed to normalize queue file {}: {e}", path.display()))?;
+        let summary =
+            publish_submission_summary_from_queue_file(submission_id.to_string(), normalized);
+        Ok(Some((value, summary)))
+    }
+
     fn list_verified_publishers(&self) -> Result<Vec<String>, String> {
         let snapshot = self.load_snapshot()?;
         let mut normalized: Vec<String> = snapshot
@@ -661,7 +683,7 @@ fn now_epoch_secs() -> u64 {
         .as_secs()
 }
 
-/// Routes browser-facing local website paths (`/site`, `/site/reports`, `/site/submissions`, `/site/servers/<name>`).
+/// Routes browser-facing local website paths (`/site`, `/site/reports`, `/site/submissions`, `/site/submissions/<id>`, `/site/servers/<name>`).
 fn route_website_request(
     request: &HttpRequest,
     registry: &Registry,
@@ -683,6 +705,13 @@ fn route_website_request(
             Some((200, render_site_submissions_page(query, state)))
         }
         _ => {
+            if let Some(raw_submission_id) = path.strip_prefix("/site/submissions/") {
+                if raw_submission_id.is_empty() || raw_submission_id.contains('/') {
+                    return Some((404, render_site_not_found_page(path)));
+                }
+                let submission_id = url_decode(raw_submission_id);
+                return Some(render_site_submission_detail_page(&submission_id, state));
+            }
             let Some(raw_name) = path.strip_prefix("/site/servers/") else {
                 return Some((404, render_site_not_found_page(path)));
             };
@@ -1317,10 +1346,11 @@ fn render_site_submissions_page(query: Option<&str>, state: &ApiState) -> String
                 .as_str()
                 .unwrap_or_default();
             let server_href = format!("/site/servers/{}", url_encode(server_name));
+            let submission_href = format!("/site/submissions/{}", url_encode(id));
 
             content.push_str("<li>");
             content.push_str(&format!(
-                "<a href=\"{}\">{}</a> <span class=\"meta\">status {} · submitted {} · quality {}/{} · id {}</span><p>{} v{} · maintainer {}</p>",
+                "<a href=\"{}\">{}</a> <span class=\"meta\">status {} · submitted {} · quality {}/{} · id {}</span><p><a href=\"{}\">Open submission</a> · {} v{} · maintainer {}</p>",
                 html_escape(&server_href),
                 html_escape(server_display_name),
                 html_escape(status),
@@ -1328,6 +1358,7 @@ fn render_site_submissions_page(query: Option<&str>, state: &ApiState) -> String
                 quality_passed,
                 quality_total,
                 html_escape(id),
+                html_escape(&submission_href),
                 html_escape(server_name),
                 html_escape(server_version),
                 html_escape(server_maintainer)
@@ -1353,6 +1384,112 @@ fn render_site_submissions_page(query: Option<&str>, state: &ApiState) -> String
     content.push_str("</section>");
 
     render_site_shell("Berth Registry Publish Queue", &content)
+}
+
+/// Renders a single publish submission detail page at `/site/submissions/<id>`.
+fn render_site_submission_detail_page(submission_id: &str, state: &ApiState) -> (u16, String) {
+    let (status, payload) = route_publish_submission_detail(submission_id, state);
+    if status != 200 {
+        return (404, render_site_not_found_page(submission_id));
+    }
+
+    let summary = &payload["summary"];
+    let submission = &payload["submission"];
+    let server_name = summary["server"]["name"].as_str().unwrap_or_default();
+    let server_display_name = summary["server"]["displayName"]
+        .as_str()
+        .unwrap_or(server_name);
+    let server_href = format!("/site/servers/{}", url_encode(server_name));
+    let queue_href = "/site/submissions";
+    let current_status = summary["status"].as_str().unwrap_or("unknown");
+    let submitted_epoch = summary["submittedAtEpochSecs"].as_u64().unwrap_or(0);
+    let quality_passed = summary["qualityChecksPassed"].as_u64().unwrap_or(0);
+    let quality_total = summary["qualityChecksTotal"].as_u64().unwrap_or(0);
+    let safe_submission_id = html_escape(submission_id);
+
+    let manifest_pretty = submission["manifest"]
+        .as_object()
+        .and_then(|_| serde_json::to_string_pretty(&submission["manifest"]).ok())
+        .unwrap_or_else(|| "{}".to_string());
+
+    let mut content = String::new();
+    content.push_str("<header class=\"hero\">");
+    content.push_str(&format!(
+        "<p class=\"kicker\"><a href=\"{queue_href}\">Back to submissions</a></p>"
+    ));
+    content.push_str("<h1>Submission Detail</h1>");
+    content.push_str(&format!(
+        "<p><strong>{}</strong> for <a href=\"{}\">{}</a></p>",
+        safe_submission_id,
+        html_escape(&server_href),
+        html_escape(server_display_name)
+    ));
+    content.push_str("</header>");
+
+    content.push_str("<section class=\"panel\">");
+    content.push_str("<h2>Review Summary</h2>");
+    content.push_str("<p class=\"meta\">");
+    content.push_str(&format!(
+        "<span>status {}</span><span>submitted {}</span><span>quality {}/{}</span>",
+        html_escape(current_status),
+        submitted_epoch,
+        quality_passed,
+        quality_total
+    ));
+    content.push_str("</p>");
+    content.push_str("<div class=\"community-actions\">");
+    content.push_str(&format!(
+        "<button type=\"button\" class=\"submission-status-btn\" data-submission-id=\"{}\" data-next-status=\"approved\">Mark approved</button>",
+        safe_submission_id
+    ));
+    content.push_str(&format!(
+        "<button type=\"button\" class=\"submission-status-btn\" data-submission-id=\"{}\" data-next-status=\"needs-changes\">Needs changes</button>",
+        safe_submission_id
+    ));
+    content.push_str(&format!(
+        "<button type=\"button\" class=\"submission-status-btn\" data-submission-id=\"{}\" data-next-status=\"rejected\">Reject</button>",
+        safe_submission_id
+    ));
+    content.push_str("</div>");
+    content.push_str("</section>");
+
+    content.push_str("<section class=\"panel\">");
+    content.push_str("<h2>Quality Checks</h2>");
+    let checks = submission["quality_checks"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    if checks.is_empty() {
+        content.push_str("<p class=\"empty\">No quality checks were recorded.</p>");
+    } else {
+        content.push_str("<ul class=\"related-list\">");
+        for check in checks {
+            let name = check["name"].as_str().unwrap_or("check");
+            let passed = check["passed"].as_bool().unwrap_or(false);
+            let detail = check["detail"].as_str().unwrap_or_default();
+            let marker = if passed { "pass" } else { "fail" };
+            content.push_str("<li>");
+            content.push_str(&format!(
+                "<span class=\"meta\">{} · {}</span><p>{}</p>",
+                html_escape(name),
+                marker,
+                html_escape(detail)
+            ));
+            content.push_str("</li>");
+        }
+        content.push_str("</ul>");
+    }
+    content.push_str("</section>");
+
+    content.push_str("<section class=\"panel\">");
+    content.push_str("<h2>Manifest Payload</h2>");
+    content.push_str(&format!(
+        "<pre><code>{}</code></pre>",
+        html_escape(&manifest_pretty)
+    ));
+    content.push_str("</section>");
+
+    (200, render_site_shell("Berth Submission Detail", &content))
 }
 
 /// Renders a server detail page at `/site/servers/<name>`.
@@ -2192,6 +2329,17 @@ fn route_request(request: &HttpRequest, registry: &Registry, state: &ApiState) -
             state,
         );
     }
+    if let Some(raw_submission_id) = path.strip_prefix("/publish/submissions/") {
+        if method != "GET" {
+            return (
+                405,
+                json!({
+                    "error": "method not allowed"
+                }),
+            );
+        }
+        return route_publish_submission_detail(raw_submission_id, state);
+    }
     match path {
         "/" | "/health" => {
             if method != "GET" {
@@ -2799,6 +2947,42 @@ fn route_publish_submissions(query: Option<&str>, state: &ApiState) -> (u16, Val
                 }),
             )
         }
+        Err(e) => (
+            500,
+            json!({
+                "error": "internal error",
+                "detail": e
+            }),
+        ),
+    }
+}
+
+fn route_publish_submission_detail(raw_submission_id: &str, state: &ApiState) -> (u16, Value) {
+    let submission_id = url_decode(raw_submission_id);
+    if !is_safe_submission_id(&submission_id) {
+        return (
+            400,
+            json!({
+                "error": "invalid submission id"
+            }),
+        );
+    }
+
+    match state.get_publish_submission(&submission_id) {
+        Ok(Some((submission, summary))) => (
+            200,
+            json!({
+                "id": submission_id,
+                "summary": summary,
+                "submission": submission
+            }),
+        ),
+        Ok(None) => (
+            404,
+            json!({
+                "error": "submission not found"
+            }),
+        ),
         Err(e) => (
             500,
             json!({
@@ -4257,6 +4441,18 @@ mod tests {
         assert!(submissions_body.contains("pending-manual-review"));
         assert!(submissions_body.contains("submission-status-btn"));
         assert!(submissions_body.contains("data-submission-id=\"github-400.json\""));
+        assert!(submissions_body.contains("/site/submissions/github-400.json"));
+
+        let (submission_detail_status, submission_detail_body) = route_website_request(
+            &req("GET", "/site/submissions/github-400.json"),
+            &registry,
+            &state,
+        )
+        .unwrap();
+        assert_eq!(submission_detail_status, 200);
+        assert!(submission_detail_body.contains("Submission Detail"));
+        assert!(submission_detail_body.contains("Manifest Payload"));
+        assert!(submission_detail_body.contains("submission-status-btn"));
 
         let (page_status, page_body) =
             route_website_request(&req("GET", "/site?limit=1&offset=1"), &registry, &state)
@@ -4633,6 +4829,33 @@ mod tests {
             pending_body["submissions"][0]["server"]["name"].as_str(),
             Some("github")
         );
+    }
+
+    #[test]
+    fn route_request_supports_publish_submission_detail_endpoint() {
+        let registry = Registry::from_seed();
+        let state = test_state();
+        seed_publish_submission(
+            &state,
+            "github-777.json",
+            777,
+            "pending-manual-review",
+            "github",
+        );
+
+        let (status, body) = route_request(
+            &req("GET", "/publish/submissions/github-777.json"),
+            &registry,
+            &state,
+        );
+        assert_eq!(status, 200);
+        assert_eq!(body["id"].as_str(), Some("github-777.json"));
+        assert_eq!(
+            body["summary"]["status"].as_str(),
+            Some("pending-manual-review")
+        );
+        assert_eq!(body["summary"]["server"]["name"].as_str(), Some("github"));
+        assert!(body["submission"]["manifest"]["server"]["name"].is_string());
     }
 
     #[test]

@@ -119,6 +119,7 @@ Registry API endpoints:
 - `GET /servers/<name>/reports?limit=<n>&offset=<n>`
 - `GET /reports?server=<name>&reason=<reason>&offset=<n>&limit=<n>`
 - `GET /publish/submissions?status=<status>&server=<name>&offset=<n>&limit=<n>`
+- `GET /publish/submissions/<id>`
 - `POST /publish/submissions/<id>/status`
 - `POST /servers/<name>/star`
 - `POST /servers/<name>/report`
@@ -128,6 +129,7 @@ Registry API endpoints:
 - `GET /site` (HTML catalog page with `q`, `category`, `platform`, `trustLevel`, `sortBy`, `order`, `limit`, `offset`)
 - `GET /site/reports` (HTML moderation feed with `server`, `reason`, `limit`, `offset`)
 - `GET /site/submissions` (HTML publish review queue with `status`, `server`, `limit`, `offset`)
+- `GET /site/submissions/<id>` (HTML submission detail with full manifest and quality checks)
 - `GET /site/servers/<name>` (HTML server detail page)
 - `OPTIONS <any-endpoint>` (browser preflight; CORS enabled)
 

@@ -19,6 +19,7 @@ struct RuntimeProbes {
     platform: HostPlatform,
     has_setpriv: bool,
     has_sandbox_exec: bool,
+    has_landlock_restrict: bool,
 }
 
 impl RuntimeProbes {
@@ -27,6 +28,7 @@ impl RuntimeProbes {
             platform: host_platform(),
             has_setpriv: path_has_binary("setpriv"),
             has_sandbox_exec: path_has_binary("sandbox-exec"),
+            has_landlock_restrict: path_has_binary("landlock-restrict"),
         }
     }
 }
@@ -72,18 +74,58 @@ fn apply_sandbox_runtime_with_probes(
     );
 
     match probes.platform {
-        HostPlatform::Linux if probes.has_setpriv => {
-            env_map.insert(
-                "BERTH_SANDBOX_BACKEND".to_string(),
-                "linux-setpriv".to_string(),
-            );
-            let mut wrapped = vec![
-                "--no-new-privs".to_string(),
-                "--".to_string(),
-                command.to_string(),
-            ];
-            wrapped.extend(args.iter().cloned());
-            ("setpriv".to_string(), wrapped)
+        HostPlatform::Linux => {
+            let mut wrapped_command = command.to_string();
+            let mut wrapped_args = args.to_vec();
+            let mut backend = Vec::new();
+
+            if probes.has_landlock_restrict {
+                let mut landlock_args = vec!["--best-effort".to_string()];
+                for permission in filesystem_permissions {
+                    if let Some((mode, path)) = parse_filesystem_permission(permission) {
+                        if path == "*" || path.is_empty() {
+                            continue;
+                        }
+                        match mode {
+                            "read" => {
+                                landlock_args.push("--ro".to_string());
+                                landlock_args.push(path.to_string());
+                            }
+                            "write" => {
+                                landlock_args.push("--rw".to_string());
+                                landlock_args.push(path.to_string());
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                landlock_args.push("--".to_string());
+                landlock_args.push(wrapped_command);
+                landlock_args.extend(wrapped_args);
+                wrapped_command = "landlock-restrict".to_string();
+                wrapped_args = landlock_args;
+                backend.push("linux-landlock");
+            }
+
+            if probes.has_setpriv {
+                let mut setpriv_args = vec![
+                    "--no-new-privs".to_string(),
+                    "--".to_string(),
+                    wrapped_command,
+                ];
+                setpriv_args.extend(wrapped_args);
+                wrapped_command = "setpriv".to_string();
+                wrapped_args = setpriv_args;
+                backend.push("linux-setpriv");
+            }
+
+            if backend.is_empty() {
+                env_map.insert("BERTH_SANDBOX_BACKEND".to_string(), "none".to_string());
+                return (command.to_string(), args.to_vec());
+            }
+
+            env_map.insert("BERTH_SANDBOX_BACKEND".to_string(), backend.join("+"));
+            (wrapped_command, wrapped_args)
         }
         HostPlatform::MacOs if probes.has_sandbox_exec => {
             env_map.insert(
@@ -215,6 +257,7 @@ mod tests {
                 platform: HostPlatform::Linux,
                 has_setpriv: true,
                 has_sandbox_exec: false,
+                has_landlock_restrict: false,
             },
         );
         assert_eq!(cmd, "npx");
@@ -238,6 +281,7 @@ mod tests {
                 platform: HostPlatform::Linux,
                 has_setpriv: true,
                 has_sandbox_exec: false,
+                has_landlock_restrict: false,
             },
         );
         assert_eq!(cmd, "setpriv");
@@ -273,6 +317,7 @@ mod tests {
                 platform: HostPlatform::Linux,
                 has_setpriv: false,
                 has_sandbox_exec: false,
+                has_landlock_restrict: false,
             },
         );
         assert_eq!(cmd, "npx");
@@ -302,6 +347,7 @@ mod tests {
                 platform: HostPlatform::MacOs,
                 has_setpriv: false,
                 has_sandbox_exec: true,
+                has_landlock_restrict: false,
             },
         );
 
@@ -316,6 +362,42 @@ mod tests {
         assert_eq!(
             env_map.get("BERTH_SANDBOX_BACKEND"),
             Some(&"macos-sandbox-exec".to_string())
+        );
+    }
+
+    #[test]
+    fn linux_landlock_wraps_with_filesystem_permissions_when_available() {
+        let mut env_map = BTreeMap::new();
+        let (cmd, args) = apply_sandbox_runtime_with_probes(
+            "npx",
+            &["-y".to_string(), "server".to_string()],
+            &mut env_map,
+            SandboxPolicy {
+                enabled: true,
+                network_deny_all: false,
+            },
+            &[
+                "read:/workspace".to_string(),
+                "write:/tmp".to_string(),
+                "exec:git".to_string(),
+            ],
+            RuntimeProbes {
+                platform: HostPlatform::Linux,
+                has_setpriv: false,
+                has_sandbox_exec: false,
+                has_landlock_restrict: true,
+            },
+        );
+
+        assert_eq!(cmd, "landlock-restrict");
+        assert_eq!(args[0], "--best-effort");
+        assert!(args.contains(&"--ro".to_string()));
+        assert!(args.contains(&"/workspace".to_string()));
+        assert!(args.contains(&"--rw".to_string()));
+        assert!(args.contains(&"/tmp".to_string()));
+        assert_eq!(
+            env_map.get("BERTH_SANDBOX_BACKEND"),
+            Some(&"linux-landlock".to_string())
         );
     }
 }

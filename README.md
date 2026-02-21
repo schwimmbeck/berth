@@ -114,7 +114,7 @@ Runtime and sandbox config keys:
 - `berth.sandbox-network` (`inherit` or `deny-all`)
 
 Sandbox runtime note:
-- On Linux, `berth.sandbox=basic` attempts a hardened launch via `setpriv --no-new-privs` when available.
+- On Linux, `berth.sandbox=basic` applies Landlock filesystem restrictions via `landlock-restrict` when available and also applies `setpriv --no-new-privs` hardening when available.
 - On macOS, `berth.sandbox=basic` uses `sandbox-exec` with a generated profile (default-deny baseline, declared write-path allowances).
 
 Registry source overrides (optional):

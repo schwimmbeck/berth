@@ -33,7 +33,7 @@ Config keys:
 
 When sandbox mode is enabled:
 
-- Linux uses `setpriv --no-new-privs` when available (best effort)
+- Linux uses `landlock-restrict` for filesystem scope enforcement when available and `setpriv --no-new-privs` for additional hardening
 - macOS uses `sandbox-exec` with a generated profile and declared write-path allowances
 - Other platforms fall back to standard process launch while preserving policy config
 

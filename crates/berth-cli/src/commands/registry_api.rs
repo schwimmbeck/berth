@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::process;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use berth_registry::types::ServerMetadata;
+use berth_registry::types::{ServerMetadata, TrustLevel};
 use berth_registry::Registry;
 
 use crate::paths;
@@ -779,6 +779,8 @@ fn route_server_detail(
                 .is_publisher_verified(&server.maintainer)
                 .unwrap_or(false);
             let badges = publisher_badges(maintainer_verified);
+            let quality_score =
+                server_quality_score(server, maintainer_verified, stars, report_count);
             (
                 200,
                 json!({
@@ -789,7 +791,9 @@ fn route_server_detail(
                         "reports": report_count
                     },
                     "maintainerVerified": maintainer_verified,
-                    "badges": badges
+                    "badges": badges,
+                    "qualityScore": quality_score,
+                    "readmeUrl": readme_url_for_repository(&server.source.repository)
                 }),
             )
         }
@@ -983,6 +987,81 @@ fn publisher_badges(maintainer_verified: bool) -> Vec<String> {
     }
 }
 
+/// Returns a best-effort README URL for a repository.
+fn readme_url_for_repository(repository: &str) -> Option<String> {
+    let trimmed = repository.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let github_rest = trimmed
+        .strip_prefix("https://github.com/")
+        .or_else(|| trimmed.strip_prefix("http://github.com/"));
+    if let Some(rest) = github_rest {
+        let mut parts = rest.split('/');
+        let owner = parts.next().unwrap_or_default().trim();
+        let repo = parts
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .trim_end_matches(".git");
+        if !owner.is_empty() && !repo.is_empty() {
+            return Some(format!(
+                "https://github.com/{owner}/{repo}/blob/main/README.md"
+            ));
+        }
+    }
+
+    if trimmed.starts_with("https://") || trimmed.starts_with("http://") {
+        Some(format!("{trimmed}/README.md"))
+    } else {
+        None
+    }
+}
+
+/// Produces a coarse, deterministic quality score for website ranking.
+fn server_quality_score(
+    server: &ServerMetadata,
+    maintainer_verified: bool,
+    stars: u64,
+    reports: u64,
+) -> u32 {
+    let mut score: i32 = 0;
+
+    score += match server.trust_level {
+        TrustLevel::Official => 35,
+        TrustLevel::Verified => 28,
+        TrustLevel::Community => 20,
+        TrustLevel::Untrusted => 8,
+    };
+
+    if server.quality.security_scan.eq_ignore_ascii_case("passed") {
+        score += 20;
+    } else if server.quality.security_scan.eq_ignore_ascii_case("unknown") {
+        score += 8;
+    }
+
+    if server.quality.health_check {
+        score += 15;
+    }
+    if maintainer_verified {
+        score += 10;
+    }
+
+    score += match server.quality.downloads {
+        0 => 0,
+        1..=99 => 4,
+        100..=999 => 8,
+        1000..=9999 => 12,
+        _ => 15,
+    };
+
+    score += stars.min(10) as i32;
+    score -= reports.min(10) as i32;
+
+    score.clamp(0, 100) as u32
+}
+
 /// Builds a compact API summary view for one registry server.
 fn server_summary(
     server: &berth_registry::types::ServerMetadata,
@@ -990,6 +1069,7 @@ fn server_summary(
 ) -> Value {
     let maintainer_verified = is_maintainer_verified(&server.maintainer, verified_publishers);
     let badges = publisher_badges(maintainer_verified);
+    let quality_score = server_quality_score(server, maintainer_verified, 0, 0);
     json!({
         "name": server.name,
         "displayName": server.display_name,
@@ -999,6 +1079,8 @@ fn server_summary(
         "maintainer": server.maintainer,
         "maintainerVerified": maintainer_verified,
         "badges": badges,
+        "qualityScore": quality_score,
+        "readmeUrl": readme_url_for_repository(&server.source.repository),
         "trustLevel": server.trust_level.to_string(),
         "downloads": server.quality.downloads,
         "installCommand": format!("berth install {}", server.name)
@@ -1069,10 +1151,21 @@ mod tests {
         let (status, search) = route_request(&req("GET", "/servers?q=github"), &registry, &state);
         assert_eq!(status, 200);
         assert!(search["count"].as_u64().unwrap_or(0) >= 1);
+        let github = search["servers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|server| server["name"].as_str() == Some("github"))
+            .unwrap();
         assert_eq!(
-            search["servers"][0]["installCommand"].as_str(),
+            github["installCommand"].as_str(),
             Some("berth install github")
         );
+        assert!(github["qualityScore"].as_u64().unwrap_or(0) > 0);
+        assert!(github["readmeUrl"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("github.com"));
 
         let (status_downloads, downloads) =
             route_request(&req("GET", "/servers/github/downloads"), &registry, &state);
@@ -1197,6 +1290,11 @@ mod tests {
             route_request(&req("GET", "/servers/github"), &registry, &state);
         assert_eq!(detail_status, 200);
         assert_eq!(detail_body["maintainerVerified"].as_bool(), Some(true));
+        assert!(detail_body["qualityScore"].as_u64().unwrap_or(0) > 0);
+        assert!(detail_body["readmeUrl"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("github.com"));
 
         let unverify_request = HttpRequest {
             method: "POST".to_string(),
@@ -1207,5 +1305,18 @@ mod tests {
         assert_eq!(unverify_status, 200);
         assert_eq!(unverify_body["status"].as_str(), Some("unverified"));
         assert_eq!(unverify_body["count"].as_u64(), Some(0));
+    }
+
+    #[test]
+    fn readme_url_for_repository_handles_github_and_generic_urls() {
+        assert_eq!(
+            readme_url_for_repository("https://github.com/acme/mcp-github.git"),
+            Some("https://github.com/acme/mcp-github/blob/main/README.md".to_string())
+        );
+        assert_eq!(
+            readme_url_for_repository("https://example.com/repo"),
+            Some("https://example.com/repo/README.md".to_string())
+        );
+        assert_eq!(readme_url_for_repository(""), None);
     }
 }

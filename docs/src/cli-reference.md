@@ -60,7 +60,10 @@ Registry API endpoints:
 - `POST /publishers/verify`
 - `POST /publishers/unverify`
 
-`GET /servers` and `GET /servers/<name>` responses include `maintainerVerified` and `badges`.
+`GET /servers` and `GET /servers/<name>` responses include:
+- `maintainerVerified` + `badges`
+- `qualityScore`
+- `readmeUrl`
 
 Client integration:
 

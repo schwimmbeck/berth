@@ -116,7 +116,10 @@ Registry API endpoints:
 - `POST /publishers/verify`
 - `POST /publishers/unverify`
 
-`GET /servers` and `GET /servers/<name>` include `maintainerVerified` and `badges` fields.
+`GET /servers` and `GET /servers/<name>` include:
+- `maintainerVerified` + `badges`
+- `qualityScore` (deterministic ranking signal)
+- `readmeUrl` (best-effort repository README link for detail pages)
 
 Permission override formats:
 - `env:<VAR>` (example: `env:GITHUB_TOKEN`)

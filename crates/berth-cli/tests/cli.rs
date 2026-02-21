@@ -546,7 +546,7 @@ fn registry_api_serves_health_search_and_downloads() {
             "--bind",
             "127.0.0.1:0",
             "--max-requests",
-            "11",
+            "12",
         ])
         .stdout(Stdio::piped())
         .spawn()
@@ -659,6 +659,20 @@ fn registry_api_serves_health_search_and_downloads() {
         .unwrap()
         .iter()
         .any(|badge| badge.as_str() == Some("verified-publisher")));
+    assert!(github["qualityScore"].as_u64().unwrap_or(0) > 0);
+    assert!(github["readmeUrl"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("github.com"));
+
+    let (detail_status, detail_body) = http_get(&addr, "/servers/github");
+    assert_eq!(detail_status, 200);
+    let detail: serde_json::Value = serde_json::from_str(&detail_body).unwrap();
+    assert!(detail["qualityScore"].as_u64().unwrap_or(0) > 0);
+    assert!(detail["readmeUrl"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("github.com"));
 
     let (unverify_status, unverify_body) = http_post_json(
         &addr,

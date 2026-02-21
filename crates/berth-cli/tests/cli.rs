@@ -615,7 +615,7 @@ fn registry_api_serves_health_search_and_downloads() {
             "--bind",
             "127.0.0.1:0",
             "--max-requests",
-            "28",
+            "31",
         ])
         .stdout(Stdio::piped())
         .spawn()
@@ -804,6 +804,33 @@ fn registry_api_serves_health_search_and_downloads() {
         Some(1)
     );
 
+    let (update_submission_status, update_submission_body) = http_post_json(
+        &addr,
+        "/publish/submissions/github-200.json/status",
+        "{\"status\":\"approved\"}",
+    );
+    assert_eq!(update_submission_status, 200);
+    let updated_submission: serde_json::Value =
+        serde_json::from_str(&update_submission_body).unwrap();
+    assert_eq!(updated_submission["status"].as_str(), Some("updated"));
+    assert_eq!(
+        updated_submission["submission"]["status"].as_str(),
+        Some("approved")
+    );
+
+    let (approved_submissions_status, approved_submissions_body) = http_get(
+        &addr,
+        "/publish/submissions?status=approved&server=github&limit=1",
+    );
+    assert_eq!(approved_submissions_status, 200);
+    let approved_submissions: serde_json::Value =
+        serde_json::from_str(&approved_submissions_body).unwrap();
+    assert_eq!(approved_submissions["total"].as_u64(), Some(1));
+    assert_eq!(
+        approved_submissions["submissions"][0]["status"].as_str(),
+        Some("approved")
+    );
+
     let (site_reports_status, site_reports_headers, site_reports_body) =
         http_get_with_headers(&addr, "/site/reports?server=github");
     assert_eq!(site_reports_status, 200);
@@ -820,8 +847,13 @@ fn registry_api_serves_health_search_and_downloads() {
     assert_eq!(site_submissions_status, 200);
     assert!(site_submissions_headers.contains("Content-Type: text/html; charset=utf-8"));
     assert!(site_submissions_body.contains("Publish Review Queue"));
-    assert!(site_submissions_body.contains("/site/servers/github"));
-    assert!(site_submissions_body.contains("pending-manual-review"));
+    assert!(site_submissions_body.contains("No submissions matched"));
+
+    let (site_submissions_approved_status, _, site_submissions_approved_body) =
+        http_get_with_headers(&addr, "/site/submissions?status=approved&server=github");
+    assert_eq!(site_submissions_approved_status, 200);
+    assert!(site_submissions_approved_body.contains("approved"));
+    assert!(site_submissions_approved_body.contains("/site/servers/github"));
 
     let (site_detail_after_status, _site_detail_after_headers, site_detail_after_body) =
         http_get_with_headers(&addr, "/site/servers/github");

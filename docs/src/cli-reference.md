@@ -62,6 +62,7 @@ Registry API endpoints:
 - `GET /servers/<name>/reports` with optional `limit`, `offset`
 - `GET /reports` with optional `server`, `reason`, `offset`, and `limit`
 - `GET /publish/submissions` with optional `status`, `server`, `offset`, and `limit`
+- `POST /publish/submissions/<id>/status`
 - `POST /servers/<name>/star`
 - `POST /servers/<name>/report`
 - `GET /publishers/verified`

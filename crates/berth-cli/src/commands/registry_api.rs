@@ -168,6 +168,11 @@ struct QueueQualityCheck {
     passed: bool,
 }
 
+#[derive(Debug, Deserialize)]
+struct PublishSubmissionStatusPayload {
+    status: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PublishSubmissionSummary {
@@ -406,23 +411,7 @@ impl ApiState {
             if id.is_empty() {
                 continue;
             }
-
-            let quality_checks_passed = payload.quality_checks.iter().filter(|c| c.passed).count();
-            let quality_checks_total = payload.quality_checks.len();
-            submissions.push(PublishSubmissionSummary {
-                id,
-                submitted_at_epoch_secs: payload.submitted_at_epoch_secs,
-                status: payload.status,
-                server: PublishSubmissionServerSummary {
-                    name: payload.manifest.server.name,
-                    display_name: payload.manifest.server.display_name,
-                    version: payload.manifest.server.version,
-                    maintainer: payload.manifest.server.maintainer,
-                    category: payload.manifest.server.category,
-                },
-                quality_checks_passed,
-                quality_checks_total,
-            });
+            submissions.push(publish_submission_summary_from_queue_file(id, payload));
         }
 
         submissions.sort_by(|left, right| {
@@ -432,6 +421,39 @@ impl ApiState {
                 .then_with(|| left.id.cmp(&right.id))
         });
         Ok(submissions)
+    }
+
+    fn set_publish_submission_status(
+        &self,
+        submission_id: &str,
+        status: &str,
+    ) -> Result<Option<PublishSubmissionSummary>, String> {
+        if !is_safe_submission_id(submission_id) {
+            return Err("invalid submission id".to_string());
+        }
+        let path = self.publish_queue_dir().join(submission_id);
+        if !path.exists() {
+            return Ok(None);
+        }
+
+        let content = fs::read_to_string(&path)
+            .map_err(|e| format!("failed to read queue file {}: {e}", path.display()))?;
+        let mut value = serde_json::from_str::<Value>(&content)
+            .map_err(|e| format!("failed to parse queue file {}: {e}", path.display()))?;
+        value["status"] = Value::String(status.to_string());
+        value["reviewedAtEpochSecs"] = json!(now_epoch_secs());
+
+        let payload = serde_json::to_string_pretty(&value)
+            .map_err(|e| format!("failed to serialize queue file {}: {e}", path.display()))?;
+        fs::write(&path, payload)
+            .map_err(|e| format!("failed to write queue file {}: {e}", path.display()))?;
+
+        let normalized = serde_json::from_value::<QueueSubmissionFile>(value)
+            .map_err(|e| format!("failed to normalize queue file {}: {e}", path.display()))?;
+        Ok(Some(publish_submission_summary_from_queue_file(
+            submission_id.to_string(),
+            normalized,
+        )))
     }
 
     fn list_verified_publishers(&self) -> Result<Vec<String>, String> {
@@ -2113,6 +2135,24 @@ fn route_request(request: &HttpRequest, registry: &Registry, state: &ApiState) -
             }),
         );
     }
+    if let Some(raw_submission_id) = path
+        .strip_prefix("/publish/submissions/")
+        .and_then(|rest| rest.strip_suffix("/status"))
+    {
+        if method != "POST" {
+            return (
+                405,
+                json!({
+                    "error": "method not allowed"
+                }),
+            );
+        }
+        return route_update_publish_submission_status(
+            raw_submission_id,
+            request.body.trim(),
+            state,
+        );
+    }
     match path {
         "/" | "/health" => {
             if method != "GET" {
@@ -2730,6 +2770,49 @@ fn route_publish_submissions(query: Option<&str>, state: &ApiState) -> (u16, Val
     }
 }
 
+fn route_update_publish_submission_status(
+    raw_submission_id: &str,
+    body: &str,
+    state: &ApiState,
+) -> (u16, Value) {
+    let submission_id = url_decode(raw_submission_id);
+    if !is_safe_submission_id(&submission_id) {
+        return (
+            400,
+            json!({
+                "error": "invalid submission id"
+            }),
+        );
+    }
+    let status = match parse_publish_submission_status_body(body) {
+        Ok(status) => status,
+        Err(error) => return error,
+    };
+
+    match state.set_publish_submission_status(&submission_id, &status) {
+        Ok(Some(submission)) => (
+            200,
+            json!({
+                "status": "updated",
+                "submission": submission
+            }),
+        ),
+        Ok(None) => (
+            404,
+            json!({
+                "error": "submission not found"
+            }),
+        ),
+        Err(e) => (
+            500,
+            json!({
+                "error": "internal error",
+                "detail": e
+            }),
+        ),
+    }
+}
+
 fn route_stats(query: Option<&str>, registry: &Registry, state: &ApiState) -> (u16, Value) {
     let top_limit = parse_usize_param(query, "top").unwrap_or(5).min(20);
     let verified_publishers = state.list_verified_publishers().unwrap_or_default();
@@ -3070,6 +3153,48 @@ fn parse_publisher_body(body: &str) -> Result<String, (u16, Value)> {
         ));
     }
     Ok(normalized)
+}
+
+fn parse_publish_submission_status_body(body: &str) -> Result<String, (u16, Value)> {
+    let payload = if body.trim().is_empty() {
+        return Err((
+            400,
+            json!({
+                "error": "missing json body"
+            }),
+        ));
+    } else {
+        match serde_json::from_str::<PublishSubmissionStatusPayload>(body) {
+            Ok(payload) => payload,
+            Err(e) => {
+                return Err((
+                    400,
+                    json!({
+                        "error": "invalid json body",
+                        "detail": e.to_string()
+                    }),
+                ));
+            }
+        }
+    };
+
+    let normalized = payload.status.trim().to_ascii_lowercase();
+    if !is_valid_submission_status(&normalized) {
+        return Err((
+            400,
+            json!({
+                "error": "invalid status"
+            }),
+        ));
+    }
+    Ok(normalized)
+}
+
+fn is_valid_submission_status(status: &str) -> bool {
+    matches!(
+        status,
+        "pending-manual-review" | "approved" | "rejected" | "needs-changes"
+    )
 }
 
 /// Returns whether a server matches all optional search filters.
@@ -3638,6 +3763,36 @@ fn query_param<'a>(query: Option<&'a str>, key: &str) -> Option<&'a str> {
         }
     }
     None
+}
+
+fn is_safe_submission_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.ends_with(".json")
+        && !value.contains('/')
+        && !value.contains('\\')
+        && !value.contains("..")
+}
+
+fn publish_submission_summary_from_queue_file(
+    id: String,
+    payload: QueueSubmissionFile,
+) -> PublishSubmissionSummary {
+    let quality_checks_passed = payload.quality_checks.iter().filter(|c| c.passed).count();
+    let quality_checks_total = payload.quality_checks.len();
+    PublishSubmissionSummary {
+        id,
+        submitted_at_epoch_secs: payload.submitted_at_epoch_secs,
+        status: payload.status,
+        server: PublishSubmissionServerSummary {
+            name: payload.manifest.server.name,
+            display_name: payload.manifest.server.display_name,
+            version: payload.manifest.server.version,
+            maintainer: payload.manifest.server.maintainer,
+            category: payload.manifest.server.category,
+        },
+        quality_checks_passed,
+        quality_checks_total,
+    }
 }
 
 /// Produces a normalized maintainer identifier for reliable comparisons.
@@ -4437,6 +4592,62 @@ mod tests {
             pending_body["submissions"][0]["server"]["name"].as_str(),
             Some("github")
         );
+    }
+
+    #[test]
+    fn route_request_supports_publish_submission_status_updates() {
+        let registry = Registry::from_seed();
+        let state = test_state();
+        seed_publish_submission(
+            &state,
+            "github-500.json",
+            500,
+            "pending-manual-review",
+            "github",
+        );
+
+        let update_request = HttpRequest {
+            method: "POST".to_string(),
+            target: "/publish/submissions/github-500.json/status".to_string(),
+            body: "{\"status\":\"approved\"}".to_string(),
+        };
+        let (update_status, update_body) = route_request(&update_request, &registry, &state);
+        assert_eq!(update_status, 200);
+        assert_eq!(update_body["status"].as_str(), Some("updated"));
+        assert_eq!(
+            update_body["submission"]["status"].as_str(),
+            Some("approved")
+        );
+        assert_eq!(
+            update_body["submission"]["server"]["name"].as_str(),
+            Some("github")
+        );
+
+        let (approved_status, approved_body) = route_request(
+            &req("GET", "/publish/submissions?status=approved&server=github"),
+            &registry,
+            &state,
+        );
+        assert_eq!(approved_status, 200);
+        assert_eq!(approved_body["total"].as_u64(), Some(1));
+
+        let invalid_request = HttpRequest {
+            method: "POST".to_string(),
+            target: "/publish/submissions/github-500.json/status".to_string(),
+            body: "{\"status\":\"unknown\"}".to_string(),
+        };
+        let (invalid_status, invalid_body) = route_request(&invalid_request, &registry, &state);
+        assert_eq!(invalid_status, 400);
+        assert_eq!(invalid_body["error"].as_str(), Some("invalid status"));
+
+        let missing_request = HttpRequest {
+            method: "POST".to_string(),
+            target: "/publish/submissions/nope.json/status".to_string(),
+            body: "{\"status\":\"approved\"}".to_string(),
+        };
+        let (missing_status, missing_body) = route_request(&missing_request, &registry, &state);
+        assert_eq!(missing_status, 404);
+        assert_eq!(missing_body["error"].as_str(), Some("submission not found"));
     }
 
     #[test]

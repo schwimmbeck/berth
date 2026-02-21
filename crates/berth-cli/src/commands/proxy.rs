@@ -224,6 +224,7 @@ fn build_process_spec(
         &installed.runtime.args,
         &mut env,
         sandbox_policy,
+        &installed.permissions.filesystem,
     );
 
     Ok((

@@ -14,21 +14,38 @@ enum HostPlatform {
     Other,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct RuntimeProbes {
+    platform: HostPlatform,
+    has_setpriv: bool,
+    has_sandbox_exec: bool,
+}
+
+impl RuntimeProbes {
+    fn detect() -> Self {
+        Self {
+            platform: host_platform(),
+            has_setpriv: path_has_binary("setpriv"),
+            has_sandbox_exec: path_has_binary("sandbox-exec"),
+        }
+    }
+}
+
 /// Applies sandbox runtime adaptation to command/args/env.
 pub fn apply_sandbox_runtime(
     command: &str,
     args: &[String],
     env_map: &mut BTreeMap<String, String>,
     policy: SandboxPolicy,
+    filesystem_permissions: &[String],
 ) -> (String, Vec<String>) {
     apply_sandbox_runtime_with_probes(
         command,
         args,
         env_map,
         policy,
-        host_platform(),
-        path_has_binary("setpriv"),
-        path_has_binary("sandbox-exec"),
+        filesystem_permissions,
+        RuntimeProbes::detect(),
     )
 }
 
@@ -37,9 +54,8 @@ fn apply_sandbox_runtime_with_probes(
     args: &[String],
     env_map: &mut BTreeMap<String, String>,
     policy: SandboxPolicy,
-    platform: HostPlatform,
-    has_setpriv: bool,
-    has_sandbox_exec: bool,
+    filesystem_permissions: &[String],
+    probes: RuntimeProbes,
 ) -> (String, Vec<String>) {
     if !policy.enabled {
         return (command.to_string(), args.to_vec());
@@ -55,8 +71,8 @@ fn apply_sandbox_runtime_with_probes(
         },
     );
 
-    match platform {
-        HostPlatform::Linux if has_setpriv => {
+    match probes.platform {
+        HostPlatform::Linux if probes.has_setpriv => {
             env_map.insert(
                 "BERTH_SANDBOX_BACKEND".to_string(),
                 "linux-setpriv".to_string(),
@@ -69,17 +85,13 @@ fn apply_sandbox_runtime_with_probes(
             wrapped.extend(args.iter().cloned());
             ("setpriv".to_string(), wrapped)
         }
-        HostPlatform::MacOs if has_sandbox_exec => {
-            // Keep policy permissive for now; this is a compatibility scaffold.
+        HostPlatform::MacOs if probes.has_sandbox_exec => {
             env_map.insert(
                 "BERTH_SANDBOX_BACKEND".to_string(),
                 "macos-sandbox-exec".to_string(),
             );
-            let mut wrapped = vec![
-                "-p".to_string(),
-                "(version 1) (allow default)".to_string(),
-                command.to_string(),
-            ];
+            let profile = build_macos_profile(policy, filesystem_permissions);
+            let mut wrapped = vec!["-p".to_string(), profile, command.to_string()];
             wrapped.extend(args.iter().cloned());
             ("sandbox-exec".to_string(), wrapped)
         }
@@ -120,6 +132,68 @@ fn candidate_paths(dir: &Path, name: &str) -> Vec<PathBuf> {
     }
 }
 
+fn build_macos_profile(policy: SandboxPolicy, filesystem_permissions: &[String]) -> String {
+    let mut write_paths = vec!["/tmp".to_string(), "/private/tmp".to_string()];
+    let mut allow_all_writes = false;
+
+    for permission in filesystem_permissions {
+        let (mode, path) = match parse_filesystem_permission(permission) {
+            Some(parts) => parts,
+            None => continue,
+        };
+        if mode != "write" {
+            continue;
+        }
+        if path == "*" {
+            allow_all_writes = true;
+            break;
+        }
+        if !path.is_empty() {
+            write_paths.push(path.to_string());
+        }
+    }
+
+    write_paths.sort();
+    write_paths.dedup();
+
+    let mut profile = vec![
+        "(version 1)".to_string(),
+        "(deny default)".to_string(),
+        "(import \"system.sb\")".to_string(),
+        "(allow process*)".to_string(),
+        "(allow file-read*)".to_string(),
+    ];
+
+    if !policy.network_deny_all {
+        profile.push("(allow network*)".to_string());
+    }
+
+    if allow_all_writes {
+        profile.push("(allow file-write*)".to_string());
+    } else {
+        profile.push("(allow file-write*".to_string());
+        for path in write_paths {
+            profile.push(format!(
+                "    (subpath \"{}\")",
+                escape_sandbox_string(&path)
+            ));
+        }
+        profile.push(")".to_string());
+    }
+
+    profile.join("\n")
+}
+
+fn parse_filesystem_permission(permission: &str) -> Option<(&str, &str)> {
+    let value = permission.strip_prefix("filesystem:").unwrap_or(permission);
+    let (mode, path) = value.split_once(':')?;
+    Some((mode, path))
+}
+
+fn escape_sandbox_string(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -136,9 +210,12 @@ mod tests {
                 enabled: false,
                 network_deny_all: false,
             },
-            HostPlatform::Linux,
-            true,
-            false,
+            &[],
+            RuntimeProbes {
+                platform: HostPlatform::Linux,
+                has_setpriv: true,
+                has_sandbox_exec: false,
+            },
         );
         assert_eq!(cmd, "npx");
         assert_eq!(args, vec!["-y".to_string()]);
@@ -156,9 +233,12 @@ mod tests {
                 enabled: true,
                 network_deny_all: false,
             },
-            HostPlatform::Linux,
-            true,
-            false,
+            &[],
+            RuntimeProbes {
+                platform: HostPlatform::Linux,
+                has_setpriv: true,
+                has_sandbox_exec: false,
+            },
         );
         assert_eq!(cmd, "setpriv");
         assert_eq!(
@@ -188,15 +268,54 @@ mod tests {
                 enabled: true,
                 network_deny_all: false,
             },
-            HostPlatform::Linux,
-            false,
-            false,
+            &[],
+            RuntimeProbes {
+                platform: HostPlatform::Linux,
+                has_setpriv: false,
+                has_sandbox_exec: false,
+            },
         );
         assert_eq!(cmd, "npx");
         assert_eq!(args, vec!["-y".to_string()]);
         assert_eq!(
             env_map.get("BERTH_SANDBOX_BACKEND"),
             Some(&"none".to_string())
+        );
+    }
+
+    #[test]
+    fn macos_profile_includes_declared_write_paths() {
+        let mut env_map = BTreeMap::new();
+        let (cmd, args) = apply_sandbox_runtime_with_probes(
+            "npx",
+            &["-y".to_string(), "server".to_string()],
+            &mut env_map,
+            SandboxPolicy {
+                enabled: true,
+                network_deny_all: false,
+            },
+            &[
+                "read:/workspace".to_string(),
+                "write:/workspace".to_string(),
+            ],
+            RuntimeProbes {
+                platform: HostPlatform::MacOs,
+                has_setpriv: false,
+                has_sandbox_exec: true,
+            },
+        );
+
+        assert_eq!(cmd, "sandbox-exec");
+        assert_eq!(args[0], "-p");
+        assert!(args[1].contains("(deny default)"));
+        assert!(args[1].contains("(allow network*)"));
+        assert!(args[1].contains("(subpath \"/workspace\")"));
+        assert_eq!(args[2], "npx");
+        assert_eq!(args[3], "-y");
+        assert_eq!(args[4], "server");
+        assert_eq!(
+            env_map.get("BERTH_SANDBOX_BACKEND"),
+            Some(&"macos-sandbox-exec".to_string())
         );
     }
 }

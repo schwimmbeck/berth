@@ -115,6 +115,7 @@ Runtime and sandbox config keys:
 
 Sandbox runtime note:
 - On Linux, `berth.sandbox=basic` attempts a hardened launch via `setpriv --no-new-privs` when available.
+- On macOS, `berth.sandbox=basic` uses `sandbox-exec` with a generated profile (default-deny baseline, declared write-path allowances).
 
 Security behavior examples:
 - Env secret filtering at launch:

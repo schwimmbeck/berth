@@ -1332,6 +1332,20 @@ fn render_site_submissions_page(query: Option<&str>, state: &ApiState) -> String
                 html_escape(server_version),
                 html_escape(server_maintainer)
             ));
+            content.push_str("<div class=\"community-actions\">");
+            content.push_str(&format!(
+                "<button type=\"button\" class=\"submission-status-btn\" data-submission-id=\"{}\" data-next-status=\"approved\">Mark approved</button>",
+                html_escape(id)
+            ));
+            content.push_str(&format!(
+                "<button type=\"button\" class=\"submission-status-btn\" data-submission-id=\"{}\" data-next-status=\"needs-changes\">Needs changes</button>",
+                html_escape(id)
+            ));
+            content.push_str(&format!(
+                "<button type=\"button\" class=\"submission-status-btn\" data-submission-id=\"{}\" data-next-status=\"rejected\">Reject</button>",
+                html_escape(id)
+            ));
+            content.push_str("</div>");
             content.push_str("</li>");
         }
         content.push_str("</ul>");
@@ -1915,6 +1929,31 @@ if (reportForm) {
       if (reportStatus) {
         reportStatus.textContent = "Report failed";
       }
+    }
+  });
+}
+
+for (const button of document.querySelectorAll(".submission-status-btn")) {
+  button.addEventListener("click", async () => {
+    const submissionId = button.getAttribute("data-submission-id");
+    const nextStatus = button.getAttribute("data-next-status");
+    if (!submissionId || !nextStatus) return;
+    try {
+      const response = await fetch(
+        `/publish/submissions/${encodeURIComponent(submissionId)}/status`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: nextStatus })
+        }
+      );
+      if (!response.ok) throw new Error();
+      button.textContent = "Updated";
+      setTimeout(() => {
+        window.location.reload();
+      }, 250);
+    } catch (_) {
+      button.textContent = "Update failed";
     }
   });
 }
@@ -4216,6 +4255,8 @@ mod tests {
         assert!(submissions_body.contains("Publish Review Queue"));
         assert!(submissions_body.contains("/site/servers/github"));
         assert!(submissions_body.contains("pending-manual-review"));
+        assert!(submissions_body.contains("submission-status-btn"));
+        assert!(submissions_body.contains("data-submission-id=\"github-400.json\""));
 
         let (page_status, page_body) =
             route_website_request(&req("GET", "/site?limit=1&offset=1"), &registry, &state)

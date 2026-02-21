@@ -11,7 +11,10 @@ use berth_registry::Registry;
 use berth_runtime::{ProcessSpec, RuntimeManager, StartOutcome};
 
 use crate::paths;
-use crate::permission_filter::{filter_env_map, load_permission_overrides};
+use crate::permission_filter::{
+    filter_env_map, load_permission_overrides, validate_network_permissions,
+    NETWORK_PERMISSION_DENIED_PREFIX,
+};
 
 /// Executes the `berth start` command.
 pub fn execute(server: Option<&str>) {
@@ -67,6 +70,15 @@ pub fn execute(server: Option<&str>) {
         let spec = match build_process_spec(name, &installed, &registry) {
             Ok(spec) => spec,
             Err(msg) => {
+                if msg.starts_with(NETWORK_PERMISSION_DENIED_PREFIX) {
+                    let _ = runtime.record_audit_event(
+                        name,
+                        "permission-network-denied",
+                        None,
+                        Some(&installed.runtime.command),
+                        Some(&installed.runtime.args),
+                    );
+                }
                 eprintln!("{} {}", "✗".red().bold(), msg);
                 failed += 1;
                 continue;
@@ -243,6 +255,7 @@ fn build_process_spec(
     }
 
     let overrides = load_permission_overrides(name)?;
+    validate_network_permissions(name, &installed.permissions.network, &overrides)?;
     filter_env_map(&mut env, &installed.permissions.env, &overrides);
 
     Ok(ProcessSpec {

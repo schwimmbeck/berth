@@ -56,7 +56,7 @@ berth list
 | MCP server health & status | Working | Runtime status from persisted state + process liveness checks |
 | MCP server log streaming | Working | Tail lifecycle events from persisted server logs |
 | MCP proxy mode | Working | Transparent stdio proxy execution for configured servers |
-| MCP permission management | Working | Inspect declared/effective permissions and enforce env permission overrides at launch time |
+| MCP permission management | Working | Inspect declared/effective permissions, enforce env overrides at launch/link time, and block launch when network is fully revoked |
 | MCP audit trail | Working | JSONL audit events for lifecycle actions with server/time filters |
 | AI client integration | Working | Auto-configure Claude Desktop, Cursor, and Windsurf |
 

@@ -12,6 +12,7 @@ use berth_registry::config::InstalledServer;
 use berth_registry::Registry;
 
 use crate::paths;
+use crate::permission_filter::{filter_env_map, load_permission_overrides};
 
 #[derive(Serialize)]
 struct ClientServerConfig {
@@ -251,6 +252,8 @@ fn load_linkable_servers() -> Result<Vec<(String, ClientServerConfig)>, String> 
                 }
             }
         }
+        let overrides = load_permission_overrides(&name)?;
+        filter_env_map(&mut env, &installed.permissions.env, &overrides);
 
         out.push((
             name,

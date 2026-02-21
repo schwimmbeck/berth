@@ -6,6 +6,9 @@ use std::fs;
 
 use crate::paths;
 
+/// Prefix used in user-facing errors for network-permission launch denials.
+pub const NETWORK_PERMISSION_DENIED_PREFIX: &str = "Network permission denied";
+
 /// User-managed permission overrides for a server.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PermissionOverrides {
@@ -96,6 +99,25 @@ pub fn filter_env_map(
     env.retain(|k, _| allowed.contains(k));
 }
 
+/// Validates that declared network access is not fully revoked by overrides.
+pub fn validate_network_permissions(
+    server: &str,
+    declared_network: &[String],
+    overrides: &PermissionOverrides,
+) -> Result<(), String> {
+    if declared_network.is_empty() {
+        return Ok(());
+    }
+
+    let effective = effective_permissions("network", declared_network, overrides);
+    if effective.is_empty() {
+        return Err(format!(
+            "{NETWORK_PERMISSION_DENIED_PREFIX} for {server}: effective network permissions are empty."
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,5 +150,23 @@ mod tests {
         filter_env_map(&mut env, &declared, &overrides);
         assert!(!env.contains_key("GITHUB_TOKEN"));
         assert!(!env.contains_key("OTHER"));
+    }
+
+    #[test]
+    fn validate_network_permissions_rejects_full_revoke() {
+        let overrides = PermissionOverrides {
+            grant: vec![],
+            revoke: vec!["network:*".to_string()],
+        };
+        let declared = vec!["api.github.com:443".to_string()];
+        let err = validate_network_permissions("github", &declared, &overrides).unwrap_err();
+        assert!(err.contains(NETWORK_PERMISSION_DENIED_PREFIX));
+    }
+
+    #[test]
+    fn validate_network_permissions_allows_declared_network() {
+        let overrides = PermissionOverrides::default();
+        let declared = vec!["api.github.com:443".to_string()];
+        assert!(validate_network_permissions("github", &declared, &overrides).is_ok());
     }
 }

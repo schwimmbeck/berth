@@ -706,6 +706,36 @@ fn link_cursor_writes_config() {
 }
 
 #[test]
+fn link_respects_env_permission_revoke() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "token=abc123"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["permissions", "github", "--revoke", "env:GITHUB_TOKEN"])
+        .output()
+        .unwrap();
+
+    let output = berth_with_home(tmp.path())
+        .args(["link", "claude-desktop"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let config_path = tmp
+        .path()
+        .join(".berth/clients/claude-desktop/claude_desktop_config.json");
+    let content = std::fs::read_to_string(config_path).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&content).unwrap();
+    assert!(json["mcpServers"]["github"]["env"]["GITHUB_TOKEN"].is_null());
+}
+
+#[test]
 fn unlink_windsurf_removes_linked_servers() {
     let tmp = tempfile::tempdir().unwrap();
     berth_with_home(tmp.path())
@@ -908,6 +938,40 @@ fn proxy_executes_child_and_records_audit() {
     let audit_out = String::from_utf8_lossy(&audit.stdout);
     assert!(audit_out.contains("proxy-start"));
     assert!(audit_out.contains("proxy-end"));
+}
+
+#[test]
+fn proxy_blocks_when_network_fully_revoked_and_audits() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "token=abc123"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["permissions", "github", "--revoke", "network:*"])
+        .output()
+        .unwrap();
+    patch_runtime_to_echo(tmp.path(), "github");
+
+    let output = berth_with_home(tmp.path())
+        .args(["proxy", "github"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Network permission denied"));
+
+    let audit = berth_with_home(tmp.path())
+        .args(["audit", "github"])
+        .output()
+        .unwrap();
+    assert!(audit.status.success());
+    let audit_out = String::from_utf8_lossy(&audit.stdout);
+    assert!(audit_out.contains("permission-network-denied"));
 }
 
 #[test]

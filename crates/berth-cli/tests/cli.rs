@@ -1436,6 +1436,7 @@ fn permissions_show_declared_permissions() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("network:api.github.com:443"));
     assert!(stdout.contains("env:GITHUB_TOKEN"));
+    assert!(stdout.contains("exec:git"));
 }
 
 #[test]
@@ -1559,6 +1560,11 @@ fn permissions_export_outputs_json() {
         .unwrap()
         .iter()
         .any(|v| v.as_str() == Some("example.com:443")));
+    assert!(json["declared"]["exec"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v.as_str() == Some("git")));
 }
 
 #[test]
@@ -1591,6 +1597,27 @@ fn permissions_accepts_valid_env_permission_override() {
         .output()
         .unwrap();
     assert!(output.status.success());
+}
+
+#[test]
+fn permissions_accepts_valid_filesystem_and_exec_permission_override() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+
+    let fs_output = berth_with_home(tmp.path())
+        .args(["permissions", "github", "--grant", "filesystem:read:/tmp"])
+        .output()
+        .unwrap();
+    assert!(fs_output.status.success());
+
+    let exec_output = berth_with_home(tmp.path())
+        .args(["permissions", "github", "--grant", "exec:git"])
+        .output()
+        .unwrap();
+    assert!(exec_output.status.success());
 }
 
 #[test]

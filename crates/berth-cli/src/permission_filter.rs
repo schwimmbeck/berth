@@ -65,8 +65,14 @@ pub fn validate_permission_syntax(permission: &str) -> Result<(), String> {
     if let Some(value) = permission.strip_prefix("network:") {
         return validate_network_permission(value, permission);
     }
+    if let Some(value) = permission.strip_prefix("filesystem:") {
+        return validate_filesystem_permission(value, permission);
+    }
+    if let Some(value) = permission.strip_prefix("exec:") {
+        return validate_exec_permission(value, permission);
+    }
     Err(format!(
-        "Invalid permission format `{permission}`. Use `env:<VAR>`, `env:*`, `network:<host>:<port>`, or `network:*`."
+        "Invalid permission format `{permission}`. Use `env:<VAR>`, `env:*`, `network:<host>:<port>`, `network:*`, `filesystem:<read|write>:<path>`, `filesystem:*`, `exec:<command>`, or `exec:*`."
     ))
 }
 
@@ -202,6 +208,45 @@ fn validate_network_permission(value: &str, original: &str) -> Result<(), String
     Ok(())
 }
 
+fn validate_filesystem_permission(value: &str, original: &str) -> Result<(), String> {
+    if value == "*" {
+        return Ok(());
+    }
+    let (mode, path) = value.split_once(':').ok_or_else(|| {
+        format!(
+            "Invalid permission format `{original}`. Filesystem permissions must be `filesystem:<read|write>:<path>`."
+        )
+    })?;
+    if !matches!(mode, "read" | "write") {
+        return Err(format!(
+            "Invalid permission format `{original}`. Mode must be `read` or `write`."
+        ));
+    }
+    if path.trim().is_empty() {
+        return Err(format!(
+            "Invalid permission format `{original}`. Filesystem path is required."
+        ));
+    }
+    Ok(())
+}
+
+fn validate_exec_permission(value: &str, original: &str) -> Result<(), String> {
+    if value == "*" {
+        return Ok(());
+    }
+    if value.trim().is_empty() {
+        return Err(format!(
+            "Invalid permission format `{original}`. Exec command is required."
+        ));
+    }
+    if value.contains(char::is_whitespace) {
+        return Err(format!(
+            "Invalid permission format `{original}`. Exec command must not contain whitespace."
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -261,6 +306,11 @@ mod tests {
         assert!(validate_permission_syntax("network:api.github.com:443").is_ok());
         assert!(validate_permission_syntax("network:*:443").is_ok());
         assert!(validate_permission_syntax("network:*").is_ok());
+        assert!(validate_permission_syntax("filesystem:read:/tmp").is_ok());
+        assert!(validate_permission_syntax("filesystem:write:/var/log").is_ok());
+        assert!(validate_permission_syntax("filesystem:*").is_ok());
+        assert!(validate_permission_syntax("exec:git").is_ok());
+        assert!(validate_permission_syntax("exec:*").is_ok());
     }
 
     #[test]
@@ -269,5 +319,8 @@ mod tests {
         assert!(validate_permission_syntax("network:api.github.com").is_err());
         assert!(validate_permission_syntax("network:api.github.com:99999").is_err());
         assert!(validate_permission_syntax("filesystem:/tmp").is_err());
+        assert!(validate_permission_syntax("filesystem:run:/tmp").is_err());
+        assert!(validate_permission_syntax("exec:").is_err());
+        assert!(validate_permission_syntax("exec:git status").is_err());
     }
 }

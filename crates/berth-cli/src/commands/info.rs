@@ -96,6 +96,24 @@ pub fn execute(server_name: &str) {
             server.permissions.env.join(", ")
         );
     }
+    if server.permissions.filesystem.is_empty() {
+        println!("  {:<18} {}", "Filesystem:".dimmed(), "none".dimmed());
+    } else {
+        println!(
+            "  {:<18} {}",
+            "Filesystem:".dimmed(),
+            server.permissions.filesystem.join(", ")
+        );
+    }
+    if server.permissions.exec.is_empty() {
+        println!("  {:<18} {}", "Exec:".dimmed(), "none".dimmed());
+    } else {
+        println!(
+            "  {:<18} {}",
+            "Exec:".dimmed(),
+            server.permissions.exec.join(", ")
+        );
+    }
     println!();
 
     // Configuration

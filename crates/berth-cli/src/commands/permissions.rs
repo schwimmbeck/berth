@@ -27,6 +27,8 @@ struct PermissionExport {
 struct ScopedPermissions {
     network: Vec<String>,
     env: Vec<String>,
+    filesystem: Vec<String>,
+    exec: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -160,6 +162,9 @@ pub fn execute(
     let effective_network =
         effective_permissions("network", &installed.permissions.network, &overrides);
     let effective_env = effective_permissions("env", &installed.permissions.env, &overrides);
+    let effective_filesystem =
+        effective_permissions("filesystem", &installed.permissions.filesystem, &overrides);
+    let effective_exec = effective_permissions("exec", &installed.permissions.exec, &overrides);
 
     if export_json {
         let export = PermissionExport {
@@ -167,6 +172,8 @@ pub fn execute(
             declared: ScopedPermissions {
                 network: installed.permissions.network.clone(),
                 env: installed.permissions.env.clone(),
+                filesystem: installed.permissions.filesystem.clone(),
+                exec: installed.permissions.exec.clone(),
             },
             overrides: OverrideLists {
                 grant: overrides.grant.clone(),
@@ -175,6 +182,8 @@ pub fn execute(
             effective: ScopedPermissions {
                 network: effective_network,
                 env: effective_env,
+                filesystem: effective_filesystem,
+                exec: effective_exec,
             },
         };
         let rendered = match serde_json::to_string_pretty(&export) {
@@ -231,6 +240,16 @@ pub fn execute(
         "env:".dimmed(),
         format_scoped("env", &effective_env)
     );
+    println!(
+        "    {} {}",
+        "filesystem:".dimmed(),
+        format_scoped("filesystem", &effective_filesystem)
+    );
+    println!(
+        "    {} {}",
+        "exec:".dimmed(),
+        format_scoped("exec", &effective_exec)
+    );
 }
 
 /// Reads and parses an installed server config file.
@@ -247,6 +266,12 @@ fn declared_permissions(installed: &InstalledServer) -> Vec<String> {
     }
     for e in &installed.permissions.env {
         out.push(format!("env:{e}"));
+    }
+    for f in &installed.permissions.filesystem {
+        out.push(format!("filesystem:{f}"));
+    }
+    for e in &installed.permissions.exec {
+        out.push(format!("exec:{e}"));
     }
     out
 }

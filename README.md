@@ -92,6 +92,10 @@ Permission override formats:
 - `env:*`
 - `network:<host>:<port>` (examples: `network:api.github.com:443`, `network:*:443`)
 - `network:*`
+- `filesystem:<read|write>:<path>` (examples: `filesystem:read:/workspace`, `filesystem:write:/tmp`)
+- `filesystem:*`
+- `exec:<command>` (example: `exec:git`)
+- `exec:*`
 
 Runtime and sandbox config keys:
 - `berth.auto-restart` (`true` or `false`)

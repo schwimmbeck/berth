@@ -313,6 +313,8 @@ mod tests {
             permissions: berth_registry::config::PermissionsInfo {
                 network: vec![],
                 env: vec![],
+                filesystem: vec![],
+                exec: vec![],
             },
             config: std::collections::BTreeMap::from([
                 ("token".to_string(), "".to_string()),

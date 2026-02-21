@@ -6,6 +6,8 @@ Berth enforces permission-aware runtime behavior with explicit local overrides.
 
 - environment variables (`env:*`)
 - network destinations (`network:host:port` and wildcards)
+- filesystem scopes (`filesystem:read:/path`, `filesystem:write:/path`)
+- executable allowlist (`exec:<command>`)
 
 ## Commands
 

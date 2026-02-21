@@ -46,10 +46,16 @@ pub struct RuntimeInfo {
     pub transport: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PermissionsInfo {
+    #[serde(default)]
     pub network: Vec<String>,
+    #[serde(default)]
     pub env: Vec<String>,
+    #[serde(default)]
+    pub filesystem: Vec<String>,
+    #[serde(default)]
+    pub exec: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -101,6 +107,8 @@ impl InstalledServer {
             permissions: PermissionsInfo {
                 network: meta.permissions.network.clone(),
                 env: meta.permissions.env.clone(),
+                filesystem: meta.permissions.filesystem.clone(),
+                exec: meta.permissions.exec.clone(),
             },
             config,
             config_meta: ConfigMeta {

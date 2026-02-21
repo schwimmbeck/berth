@@ -17,7 +17,9 @@
     "transport": "stdio",
     "permissions": {
       "network": ["api.github.com:443"],
-      "env": ["GITHUB_TOKEN"]
+      "env": ["GITHUB_TOKEN"],
+      "filesystem": [],
+      "exec": ["git"]
     },
     "config": {
       "required": [
@@ -60,7 +62,9 @@
     "transport": "stdio",
     "permissions": {
       "network": [],
-      "env": []
+      "env": [],
+      "filesystem": ["read:/workspace", "write:/tmp"],
+      "exec": []
     },
     "config": {
       "required": [
@@ -103,7 +107,9 @@
     "transport": "stdio",
     "permissions": {
       "network": ["api.search.brave.com:443"],
-      "env": ["BRAVE_API_KEY"]
+      "env": ["BRAVE_API_KEY"],
+      "filesystem": [],
+      "exec": []
     },
     "config": {
       "required": [
@@ -144,7 +150,9 @@
     "transport": "stdio",
     "permissions": {
       "network": ["*:5432"],
-      "env": ["POSTGRES_CONNECTION_STRING"]
+      "env": ["POSTGRES_CONNECTION_STRING"],
+      "filesystem": [],
+      "exec": []
     },
     "config": {
       "required": [
@@ -187,7 +195,9 @@
     "transport": "stdio",
     "permissions": {
       "network": ["slack.com:443", "api.slack.com:443"],
-      "env": ["SLACK_BOT_TOKEN", "SLACK_TEAM_ID"]
+      "env": ["SLACK_BOT_TOKEN", "SLACK_TEAM_ID"],
+      "filesystem": [],
+      "exec": []
     },
     "config": {
       "required": [

@@ -44,8 +44,14 @@ pub struct ServerRuntime {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerPermissions {
+    #[serde(default)]
     pub network: Vec<String>,
+    #[serde(default)]
     pub env: Vec<String>,
+    #[serde(default)]
+    pub filesystem: Vec<String>,
+    #[serde(default)]
+    pub exec: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

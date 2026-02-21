@@ -56,6 +56,11 @@ Registry API endpoints:
 - `GET /servers/<name>/community`
 - `POST /servers/<name>/star`
 - `POST /servers/<name>/report`
+- `GET /publishers/verified`
+- `POST /publishers/verify`
+- `POST /publishers/unverify`
+
+`GET /servers` and `GET /servers/<name>` responses include `maintainerVerified` and `badges`.
 
 Client integration:
 

@@ -546,7 +546,7 @@ fn registry_api_serves_health_search_and_downloads() {
             "--bind",
             "127.0.0.1:0",
             "--max-requests",
-            "8",
+            "11",
         ])
         .stdout(Stdio::piped())
         .spawn()
@@ -629,6 +629,46 @@ fn registry_api_serves_health_search_and_downloads() {
     let community: serde_json::Value = serde_json::from_str(&community_body).unwrap();
     assert!(community["stars"].as_u64().unwrap_or(0) >= 1);
     assert!(community["reports"].as_u64().unwrap_or(0) >= 1);
+
+    let (verify_status, verify_body) = http_post_json(
+        &addr,
+        "/publishers/verify",
+        "{\"maintainer\":\"Anthropic\"}",
+    );
+    assert_eq!(verify_status, 200);
+    let verify: serde_json::Value = serde_json::from_str(&verify_body).unwrap();
+    assert_eq!(verify["status"].as_str(), Some("verified"));
+    assert!(verify["verifiedPublishers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v.as_str() == Some("anthropic")));
+
+    let (badged_search_status, badged_search_body) = http_get(&addr, "/servers?q=github");
+    assert_eq!(badged_search_status, 200);
+    let badged_search: serde_json::Value = serde_json::from_str(&badged_search_body).unwrap();
+    let github = badged_search["servers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|server| server["name"].as_str() == Some("github"))
+        .unwrap();
+    assert_eq!(github["maintainerVerified"].as_bool(), Some(true));
+    assert!(github["badges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|badge| badge.as_str() == Some("verified-publisher")));
+
+    let (unverify_status, unverify_body) = http_post_json(
+        &addr,
+        "/publishers/unverify",
+        "{\"maintainer\":\"Anthropic\"}",
+    );
+    assert_eq!(unverify_status, 200);
+    let unverify: serde_json::Value = serde_json::from_str(&unverify_body).unwrap();
+    assert_eq!(unverify["status"].as_str(), Some("unverified"));
+    assert_eq!(unverify["count"].as_u64(), Some(0));
 
     let status = child.wait().unwrap();
     assert!(status.success());

@@ -29,6 +29,8 @@ struct CommunitySnapshot {
     stars: std::collections::BTreeMap<String, u64>,
     #[serde(default)]
     reports: std::collections::BTreeMap<String, u64>,
+    #[serde(default)]
+    verified_publishers: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -46,6 +48,12 @@ struct ReportPayload {
     reason: String,
     #[serde(default)]
     details: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct PublisherPayload {
+    #[serde(default)]
+    maintainer: String,
 }
 
 #[derive(Debug)]
@@ -140,6 +148,54 @@ impl ApiState {
         writeln!(file, "{line}")
             .map_err(|e| format!("failed to append report {}: {e}", report_path.display()))?;
         Ok(report_count)
+    }
+
+    fn list_verified_publishers(&self) -> Result<Vec<String>, String> {
+        let snapshot = self.load_snapshot()?;
+        let mut normalized: Vec<String> = snapshot
+            .verified_publishers
+            .iter()
+            .map(|name| normalize_maintainer(name))
+            .filter(|name| !name.is_empty())
+            .collect();
+        normalized.sort();
+        normalized.dedup();
+        Ok(normalized)
+    }
+
+    fn verify_publisher(&self, maintainer: &str) -> Result<Vec<String>, String> {
+        let normalized = normalize_maintainer(maintainer);
+        if normalized.is_empty() {
+            return Err("maintainer is required".to_string());
+        }
+        let mut snapshot = self.load_snapshot()?;
+        snapshot.verified_publishers.push(normalized);
+        snapshot.verified_publishers.sort();
+        snapshot.verified_publishers.dedup();
+        self.save_snapshot(&snapshot)?;
+        self.list_verified_publishers()
+    }
+
+    fn unverify_publisher(&self, maintainer: &str) -> Result<Vec<String>, String> {
+        let normalized = normalize_maintainer(maintainer);
+        if normalized.is_empty() {
+            return Err("maintainer is required".to_string());
+        }
+        let mut snapshot = self.load_snapshot()?;
+        snapshot
+            .verified_publishers
+            .retain(|name| normalize_maintainer(name) != normalized);
+        self.save_snapshot(&snapshot)?;
+        self.list_verified_publishers()
+    }
+
+    fn is_publisher_verified(&self, maintainer: &str) -> Result<bool, String> {
+        let normalized = normalize_maintainer(maintainer);
+        if normalized.is_empty() {
+            return Ok(false);
+        }
+        let publishers = self.list_verified_publishers()?;
+        Ok(publishers.iter().any(|name| name == &normalized))
     }
 }
 
@@ -344,6 +400,39 @@ fn route_request(request: &HttpRequest, registry: &Registry, state: &ApiState) -
             }
             route_server_filters(registry)
         }
+        "/publishers/verified" => {
+            if method != "GET" {
+                return (
+                    405,
+                    json!({
+                        "error": "method not allowed"
+                    }),
+                );
+            }
+            route_verified_publishers(state)
+        }
+        "/publishers/verify" => {
+            if method != "POST" {
+                return (
+                    405,
+                    json!({
+                        "error": "method not allowed"
+                    }),
+                );
+            }
+            route_verify_publisher(request.body.trim(), state)
+        }
+        "/publishers/unverify" => {
+            if method != "POST" {
+                return (
+                    405,
+                    json!({
+                        "error": "method not allowed"
+                    }),
+                );
+            }
+            route_unverify_publisher(request.body.trim(), state)
+        }
         "/servers" => {
             if method != "GET" {
                 return (
@@ -401,10 +490,11 @@ fn route_request(request: &HttpRequest, registry: &Registry, state: &ApiState) -
             } else {
                 entries.into_iter().skip(offset).collect::<Vec<_>>()
             };
+            let verified_publishers = state.list_verified_publishers().unwrap_or_default();
             let servers = sliced
                 .into_iter()
                 .map(|(server, score)| {
-                    let mut summary = server_summary(server);
+                    let mut summary = server_summary(server, &verified_publishers);
                     if let Some(score) = score {
                         if let Some(obj) = summary.as_object_mut() {
                             obj.insert("score".to_string(), json!(score));
@@ -457,6 +547,127 @@ fn route_server_filters(registry: &Registry) -> (u16, Value) {
             "trustLevels": trust_levels.into_iter().collect::<Vec<_>>()
         }),
     )
+}
+
+fn route_verified_publishers(state: &ApiState) -> (u16, Value) {
+    match state.list_verified_publishers() {
+        Ok(verified_publishers) => (
+            200,
+            json!({
+                "count": verified_publishers.len(),
+                "verifiedPublishers": verified_publishers
+            }),
+        ),
+        Err(e) => (
+            500,
+            json!({
+                "error": "internal error",
+                "detail": e
+            }),
+        ),
+    }
+}
+
+fn route_verify_publisher(body: &str, state: &ApiState) -> (u16, Value) {
+    let maintainer = match parse_publisher_body(body) {
+        Ok(maintainer) => maintainer,
+        Err(err) => return err,
+    };
+    match state.verify_publisher(&maintainer) {
+        Ok(verified_publishers) => (
+            200,
+            json!({
+                "status": "verified",
+                "maintainer": maintainer,
+                "count": verified_publishers.len(),
+                "verifiedPublishers": verified_publishers
+            }),
+        ),
+        Err(e) => (
+            500,
+            json!({
+                "error": "internal error",
+                "detail": e
+            }),
+        ),
+    }
+}
+
+fn route_unverify_publisher(body: &str, state: &ApiState) -> (u16, Value) {
+    let maintainer = match parse_publisher_body(body) {
+        Ok(maintainer) => maintainer,
+        Err(err) => return err,
+    };
+    match state.unverify_publisher(&maintainer) {
+        Ok(verified_publishers) => (
+            200,
+            json!({
+                "status": "unverified",
+                "maintainer": maintainer,
+                "count": verified_publishers.len(),
+                "verifiedPublishers": verified_publishers
+            }),
+        ),
+        Err(e) => (
+            500,
+            json!({
+                "error": "internal error",
+                "detail": e
+            }),
+        ),
+    }
+}
+
+fn parse_publisher_body(body: &str) -> Result<String, (u16, Value)> {
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return Err((
+            400,
+            json!({
+                "error": "maintainer is required"
+            }),
+        ));
+    }
+
+    let maintainer = if trimmed.starts_with('{') {
+        match serde_json::from_str::<PublisherPayload>(trimmed) {
+            Ok(payload) => payload.maintainer,
+            Err(e) => {
+                return Err((
+                    400,
+                    json!({
+                        "error": "invalid json body",
+                        "detail": e.to_string()
+                    }),
+                ));
+            }
+        }
+    } else if trimmed.starts_with('"') {
+        match serde_json::from_str::<String>(trimmed) {
+            Ok(value) => value,
+            Err(e) => {
+                return Err((
+                    400,
+                    json!({
+                        "error": "invalid json body",
+                        "detail": e.to_string()
+                    }),
+                ));
+            }
+        }
+    } else {
+        trimmed.to_string()
+    };
+    let normalized = normalize_maintainer(&maintainer);
+    if normalized.is_empty() {
+        return Err((
+            400,
+            json!({
+                "error": "maintainer is required"
+            }),
+        ));
+    }
+    Ok(normalized)
 }
 
 /// Returns whether a server matches all optional search filters.
@@ -564,6 +775,10 @@ fn route_server_detail(
                 );
             }
             let (stars, report_count) = state.community_counts(server_name).unwrap_or((0, 0));
+            let maintainer_verified = state
+                .is_publisher_verified(&server.maintainer)
+                .unwrap_or(false);
+            let badges = publisher_badges(maintainer_verified);
             (
                 200,
                 json!({
@@ -572,7 +787,9 @@ fn route_server_detail(
                     "community": {
                         "stars": stars,
                         "reports": report_count
-                    }
+                    },
+                    "maintainerVerified": maintainer_verified,
+                    "badges": badges
                 }),
             )
         }
@@ -742,14 +959,46 @@ fn query_param<'a>(query: Option<&'a str>, key: &str) -> Option<&'a str> {
     None
 }
 
+/// Produces a normalized maintainer identifier for reliable comparisons.
+fn normalize_maintainer(maintainer: &str) -> String {
+    maintainer
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+/// Returns `true` when a maintainer is in the verified list.
+fn is_maintainer_verified(maintainer: &str, verified_publishers: &[String]) -> bool {
+    let normalized = normalize_maintainer(maintainer);
+    !normalized.is_empty() && verified_publishers.iter().any(|name| name == &normalized)
+}
+
+/// Builds badges for API responses.
+fn publisher_badges(maintainer_verified: bool) -> Vec<String> {
+    if maintainer_verified {
+        vec!["verified-publisher".to_string()]
+    } else {
+        Vec::new()
+    }
+}
+
 /// Builds a compact API summary view for one registry server.
-fn server_summary(server: &berth_registry::types::ServerMetadata) -> Value {
+fn server_summary(
+    server: &berth_registry::types::ServerMetadata,
+    verified_publishers: &[String],
+) -> Value {
+    let maintainer_verified = is_maintainer_verified(&server.maintainer, verified_publishers);
+    let badges = publisher_badges(maintainer_verified);
     json!({
         "name": server.name,
         "displayName": server.display_name,
         "description": server.description,
         "version": server.version,
         "category": server.category,
+        "maintainer": server.maintainer,
+        "maintainerVerified": maintainer_verified,
+        "badges": badges,
         "trustLevel": server.trust_level.to_string(),
         "downloads": server.quality.downloads,
         "installCommand": format!("berth install {}", server.name)
@@ -901,5 +1150,62 @@ mod tests {
         assert_eq!(community_status, 200);
         assert_eq!(community_body["stars"].as_u64(), Some(1));
         assert_eq!(community_body["reports"].as_u64(), Some(1));
+    }
+
+    #[test]
+    fn route_request_handles_verified_publishers_endpoints() {
+        let registry = Registry::from_seed();
+        let state = test_state();
+
+        let (initial_status, initial_body) =
+            route_request(&req("GET", "/publishers/verified"), &registry, &state);
+        assert_eq!(initial_status, 200);
+        assert_eq!(initial_body["count"].as_u64(), Some(0));
+
+        let verify_request = HttpRequest {
+            method: "POST".to_string(),
+            target: "/publishers/verify".to_string(),
+            body: "{\"maintainer\":\"Anthropic\"}".to_string(),
+        };
+        let (verify_status, verify_body) = route_request(&verify_request, &registry, &state);
+        assert_eq!(verify_status, 200);
+        assert_eq!(verify_body["status"].as_str(), Some("verified"));
+        assert_eq!(verify_body["maintainer"].as_str(), Some("anthropic"));
+        assert!(verify_body["verifiedPublishers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v.as_str() == Some("anthropic")));
+
+        let (search_status, search_body) =
+            route_request(&req("GET", "/servers?q=github"), &registry, &state);
+        assert_eq!(search_status, 200);
+        let github = search_body["servers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|server| server["name"].as_str() == Some("github"))
+            .unwrap();
+        assert_eq!(github["maintainerVerified"].as_bool(), Some(true));
+        assert!(github["badges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|badge| badge.as_str() == Some("verified-publisher")));
+
+        let (detail_status, detail_body) =
+            route_request(&req("GET", "/servers/github"), &registry, &state);
+        assert_eq!(detail_status, 200);
+        assert_eq!(detail_body["maintainerVerified"].as_bool(), Some(true));
+
+        let unverify_request = HttpRequest {
+            method: "POST".to_string(),
+            target: "/publishers/unverify".to_string(),
+            body: "{\"maintainer\":\"Anthropic\"}".to_string(),
+        };
+        let (unverify_status, unverify_body) = route_request(&unverify_request, &registry, &state);
+        assert_eq!(unverify_status, 200);
+        assert_eq!(unverify_body["status"].as_str(), Some("unverified"));
+        assert_eq!(unverify_body["count"].as_u64(), Some(0));
     }
 }

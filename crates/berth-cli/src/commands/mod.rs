@@ -152,7 +152,7 @@ pub enum Commands {
         export: Option<String>,
     },
 
-    /// Link Berth to an AI client (e.g. claude-desktop, cursor, continue)
+    /// Link Berth to an AI client (e.g. claude-desktop, cursor, continue, vscode)
     Link {
         /// Client name
         client: String,

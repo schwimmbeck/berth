@@ -58,7 +58,7 @@ berth list
 | MCP proxy mode | Working | Transparent stdio proxy execution for configured servers |
 | MCP permission management | Working | Inspect declared/effective permissions, enforce env overrides at launch/link time, and block launch when network is fully revoked |
 | MCP audit trail | Working | JSONL audit events for lifecycle actions with server/time filters |
-| AI client integration | Working | Auto-configure Claude Desktop, Cursor, Windsurf, and Continue |
+| AI client integration | Working | Auto-configure Claude Desktop, Cursor, Windsurf, Continue, and VS Code |
 
 ## Commands
 
@@ -82,8 +82,8 @@ berth logs <server>            Show recent MCP server logs
 
 berth permissions <server>     Show/manage/export MCP server permissions (--grant/--revoke/--reset/--export)
 berth audit [server]           View/export runtime audit log (supports --since, --action, --json, and --export)
-berth link <client>            Link Berth-managed servers to claude-desktop, cursor, windsurf, or continue
-berth unlink <client>          Unlink Berth-managed servers from claude-desktop, cursor, windsurf, or continue
+berth link <client>            Link Berth-managed servers to claude-desktop, cursor, windsurf, continue, or vscode
+berth unlink <client>          Unlink Berth-managed servers from claude-desktop, cursor, windsurf, continue, or vscode
 berth proxy <server>           Run as transparent MCP proxy
 ```
 

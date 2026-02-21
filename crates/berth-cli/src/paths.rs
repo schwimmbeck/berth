@@ -38,6 +38,7 @@ pub fn client_config_path(client: &str) -> Option<PathBuf> {
         "cursor" => ("cursor", "cursor_mcp_config.json"),
         "windsurf" => ("windsurf", "windsurf_mcp_config.json"),
         "continue" => ("continue", "continue_config.json"),
+        "vscode" => ("vscode", "vscode_mcp_config.json"),
         _ => return None,
     };
 
@@ -130,6 +131,33 @@ pub fn client_config_path(client: &str) -> Option<PathBuf> {
             }
         }
         "continue" => home.join(".continue").join("config.json"),
+        "vscode" => {
+            if cfg!(target_os = "macos") {
+                home.join("Library")
+                    .join("Application Support")
+                    .join("Code")
+                    .join("User")
+                    .join("mcp.json")
+            } else if cfg!(target_os = "windows") {
+                if let Ok(appdata) = std::env::var("APPDATA") {
+                    PathBuf::from(appdata)
+                        .join("Code")
+                        .join("User")
+                        .join("mcp.json")
+                } else {
+                    home.join("AppData")
+                        .join("Roaming")
+                        .join("Code")
+                        .join("User")
+                        .join("mcp.json")
+                }
+            } else {
+                home.join(".config")
+                    .join("Code")
+                    .join("User")
+                    .join("mcp.json")
+            }
+        }
         _ => unreachable!(),
     })
 }

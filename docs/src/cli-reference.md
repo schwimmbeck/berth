@@ -45,6 +45,7 @@ Supported clients:
 - `cursor`
 - `windsurf`
 - `continue`
+- `vscode`
 
 For complete argument details, use:
 

@@ -8,6 +8,7 @@ Berth can write MCP client configuration entries for installed servers.
 - Cursor (`cursor`)
 - Windsurf (`windsurf`)
 - Continue (`continue`)
+- VS Code (`vscode`)
 
 ## Commands
 
@@ -16,6 +17,7 @@ berth link claude-desktop
 berth link cursor
 berth link windsurf
 berth link continue
+berth link vscode
 
 berth unlink claude-desktop
 ```

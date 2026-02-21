@@ -29,13 +29,14 @@ pub fn execute(client: &str) {
         Some(p) => p,
         None => {
             eprintln!(
-                "{} Unsupported client {}. Supported: {}, {}, {}, {}.",
+                "{} Unsupported client {}. Supported: {}, {}, {}, {}, {}.",
                 "✗".red().bold(),
                 client.cyan(),
                 "claude-desktop".bold(),
                 "cursor".bold(),
                 "windsurf".bold(),
-                "continue".bold()
+                "continue".bold(),
+                "vscode".bold()
             );
             process::exit(1);
         }

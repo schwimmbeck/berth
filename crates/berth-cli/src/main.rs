@@ -2,6 +2,7 @@
 
 mod commands;
 pub mod paths;
+pub mod permission_filter;
 
 use clap::Parser;
 use commands::Commands;

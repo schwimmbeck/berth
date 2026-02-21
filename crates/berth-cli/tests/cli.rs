@@ -106,6 +106,50 @@ fn patch_runtime_to_echo(tmp: &std::path::Path, server: &str) {
     std::fs::write(&config_path, rendered).unwrap();
 }
 
+fn patch_runtime_to_print_env_var(tmp: &std::path::Path, server: &str, env_var: &str) {
+    let config_path = tmp.join(".berth/servers").join(format!("{server}.toml"));
+    let content = std::fs::read_to_string(&config_path).unwrap();
+    let mut value: toml::Value = toml::from_str(&content).unwrap();
+    let runtime = value
+        .get_mut("runtime")
+        .and_then(toml::Value::as_table_mut)
+        .unwrap();
+
+    #[cfg(unix)]
+    {
+        runtime.insert("command".to_string(), toml::Value::String("sh".to_string()));
+        runtime.insert(
+            "args".to_string(),
+            toml::Value::Array(vec![
+                toml::Value::String("-c".to_string()),
+                toml::Value::String(format!(
+                    "if [ -n \"${env_var}\" ]; then echo env-present; else echo env-missing; fi"
+                )),
+            ]),
+        );
+    }
+
+    #[cfg(windows)]
+    {
+        runtime.insert(
+            "command".to_string(),
+            toml::Value::String("cmd".to_string()),
+        );
+        runtime.insert(
+            "args".to_string(),
+            toml::Value::Array(vec![
+                toml::Value::String("/C".to_string()),
+                toml::Value::String(format!(
+                    "if defined {env_var} (echo env-present) else (echo env-missing)"
+                )),
+            ]),
+        );
+    }
+
+    let rendered = toml::to_string_pretty(&value).unwrap();
+    std::fs::write(&config_path, rendered).unwrap();
+}
+
 // --- search ---
 
 #[test]
@@ -864,6 +908,32 @@ fn proxy_executes_child_and_records_audit() {
     let audit_out = String::from_utf8_lossy(&audit.stdout);
     assert!(audit_out.contains("proxy-start"));
     assert!(audit_out.contains("proxy-end"));
+}
+
+#[test]
+fn proxy_applies_env_permission_revoke() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "token=abc123"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["permissions", "github", "--revoke", "env:GITHUB_TOKEN"])
+        .output()
+        .unwrap();
+    patch_runtime_to_print_env_var(tmp.path(), "github", "GITHUB_TOKEN");
+
+    let output = berth_with_home(tmp.path())
+        .args(["proxy", "github"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("env-missing"));
 }
 
 // --- update ---

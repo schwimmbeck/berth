@@ -11,6 +11,7 @@ use berth_registry::Registry;
 use berth_runtime::{ProcessSpec, RuntimeManager, StartOutcome};
 
 use crate::paths;
+use crate::permission_filter::{filter_env_map, load_permission_overrides};
 
 /// Executes the `berth start` command.
 pub fn execute(server: Option<&str>) {
@@ -63,7 +64,14 @@ pub fn execute(server: Option<&str>) {
             continue;
         }
 
-        let spec = build_process_spec(name, &installed, &registry);
+        let spec = match build_process_spec(name, &installed, &registry) {
+            Ok(spec) => spec,
+            Err(msg) => {
+                eprintln!("{} {}", "✗".red().bold(), msg);
+                failed += 1;
+                continue;
+            }
+        };
         match runtime.start(name, &spec) {
             Ok(StartOutcome::Started) => {
                 println!("{} Started {}.", "✓".green().bold(), name.cyan());
@@ -210,7 +218,11 @@ fn missing_required_keys(installed: &InstalledServer) -> Vec<String> {
 }
 
 /// Builds a runtime process spec from installed metadata and config values.
-fn build_process_spec(name: &str, installed: &InstalledServer, registry: &Registry) -> ProcessSpec {
+fn build_process_spec(
+    name: &str,
+    installed: &InstalledServer,
+    registry: &Registry,
+) -> Result<ProcessSpec, String> {
     let mut env = BTreeMap::new();
 
     if let Some(meta) = registry.get(name) {
@@ -230,11 +242,14 @@ fn build_process_spec(name: &str, installed: &InstalledServer, registry: &Regist
         }
     }
 
-    ProcessSpec {
+    let overrides = load_permission_overrides(name)?;
+    filter_env_map(&mut env, &installed.permissions.env, &overrides);
+
+    Ok(ProcessSpec {
         command: installed.runtime.command.clone(),
         args: installed.runtime.args.clone(),
         env,
-    }
+    })
 }
 
 #[cfg(test)]

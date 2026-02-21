@@ -56,7 +56,7 @@ berth list
 | MCP server health & status | Working | Runtime status from persisted state + process liveness checks |
 | MCP server log streaming | Working | Tail lifecycle events from persisted server logs |
 | MCP proxy mode | Working | Transparent stdio proxy execution for configured servers |
-| MCP permission management | Working | Inspect declared permissions and manage local grant/revoke overrides |
+| MCP permission management | Working | Inspect declared/effective permissions and enforce env permission overrides at launch time |
 | MCP audit trail | Working | JSONL audit events for lifecycle actions with server/time filters |
 | AI client integration | Working | Auto-configure Claude Desktop, Cursor, and Windsurf |
 
@@ -80,8 +80,6 @@ berth logs <server>            Show recent MCP server logs
 
 berth permissions <server>     Show/manage MCP server permission overrides
 berth audit [server]           View runtime audit log (supports --since)
-berth link claude-desktop      Link Berth-managed servers to Claude Desktop
-berth unlink claude-desktop    Remove Berth-managed servers from Claude Desktop
 berth link <client>            Link Berth-managed servers to claude-desktop, cursor, or windsurf
 berth unlink <client>          Unlink Berth-managed servers from claude-desktop, cursor, or windsurf
 berth proxy <server>           Run as transparent MCP proxy

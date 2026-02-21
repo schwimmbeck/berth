@@ -10,6 +10,7 @@ use std::path::Path;
 use std::process::{self, Command, Stdio};
 
 use crate::paths;
+use crate::permission_filter::{filter_env_map, load_permission_overrides};
 
 /// Executes the `berth proxy` command.
 pub fn execute(server: &str) {
@@ -53,7 +54,13 @@ pub fn execute(server: &str) {
     }
 
     let registry = Registry::from_seed();
-    let spec = build_process_spec(server, &installed, &registry);
+    let spec = match build_process_spec(server, &installed, &registry) {
+        Ok(spec) => spec,
+        Err(msg) => {
+            eprintln!("{} {}", "✗".red().bold(), msg);
+            process::exit(1);
+        }
+    };
 
     let berth_home = match paths::berth_home() {
         Some(h) => h,
@@ -140,7 +147,11 @@ fn missing_required_keys(installed: &InstalledServer) -> Vec<String> {
 }
 
 /// Builds a runtime process spec from installed metadata and config values.
-fn build_process_spec(name: &str, installed: &InstalledServer, registry: &Registry) -> ProcessSpec {
+fn build_process_spec(
+    name: &str,
+    installed: &InstalledServer,
+    registry: &Registry,
+) -> Result<ProcessSpec, String> {
     let mut env = BTreeMap::new();
 
     if let Some(meta) = registry.get(name) {
@@ -160,9 +171,12 @@ fn build_process_spec(name: &str, installed: &InstalledServer, registry: &Regist
         }
     }
 
-    ProcessSpec {
+    let overrides = load_permission_overrides(name)?;
+    filter_env_map(&mut env, &installed.permissions.env, &overrides);
+
+    Ok(ProcessSpec {
         command: installed.runtime.command.clone(),
         args: installed.runtime.args.clone(),
         env,
-    }
+    })
 }

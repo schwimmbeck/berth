@@ -2,20 +2,14 @@
 
 use berth_registry::config::InstalledServer;
 use colored::Colorize;
-use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 use std::process;
 
 use crate::paths;
-
-#[derive(Debug, Default, Serialize, Deserialize)]
-struct PermissionOverrides {
-    #[serde(default)]
-    grant: Vec<String>,
-    #[serde(default)]
-    revoke: Vec<String>,
-}
+use crate::permission_filter::{
+    effective_permissions, load_permission_overrides, write_permission_overrides,
+};
 
 /// Executes the `berth permissions` command.
 pub fn execute(server: &str, grant: Option<&str>, revoke: Option<&str>) {
@@ -53,19 +47,17 @@ pub fn execute(server: &str, grant: Option<&str>, revoke: Option<&str>) {
         }
     };
 
-    let overrides_path = match paths::permissions_override_path(server) {
-        Some(p) => p,
-        None => {
-            eprintln!("{} Could not determine home directory.", "✗".red().bold());
-            process::exit(1);
-        }
-    };
-
     if let Some(perm) = grant {
-        let mut overrides = load_overrides(&overrides_path).unwrap_or_default();
+        let mut overrides = match load_permission_overrides(server) {
+            Ok(o) => o,
+            Err(msg) => {
+                eprintln!("{} {}", "✗".red().bold(), msg);
+                process::exit(1);
+            }
+        };
         upsert_permission(&mut overrides.grant, perm);
         remove_permission(&mut overrides.revoke, perm);
-        if let Err(msg) = write_overrides(&overrides_path, &overrides) {
+        if let Err(msg) = write_permission_overrides(server, &overrides) {
             eprintln!("{} {}", "✗".red().bold(), msg);
             process::exit(1);
         }
@@ -79,10 +71,16 @@ pub fn execute(server: &str, grant: Option<&str>, revoke: Option<&str>) {
     }
 
     if let Some(perm) = revoke {
-        let mut overrides = load_overrides(&overrides_path).unwrap_or_default();
+        let mut overrides = match load_permission_overrides(server) {
+            Ok(o) => o,
+            Err(msg) => {
+                eprintln!("{} {}", "✗".red().bold(), msg);
+                process::exit(1);
+            }
+        };
         upsert_permission(&mut overrides.revoke, perm);
         remove_permission(&mut overrides.grant, perm);
-        if let Err(msg) = write_overrides(&overrides_path, &overrides) {
+        if let Err(msg) = write_permission_overrides(server, &overrides) {
             eprintln!("{} {}", "✗".red().bold(), msg);
             process::exit(1);
         }
@@ -95,8 +93,17 @@ pub fn execute(server: &str, grant: Option<&str>, revoke: Option<&str>) {
         return;
     }
 
-    let overrides = load_overrides(&overrides_path).unwrap_or_default();
+    let overrides = match load_permission_overrides(server) {
+        Ok(o) => o,
+        Err(msg) => {
+            eprintln!("{} {}", "✗".red().bold(), msg);
+            process::exit(1);
+        }
+    };
     let declared = declared_permissions(&installed);
+    let effective_network =
+        effective_permissions("network", &installed.permissions.network, &overrides);
+    let effective_env = effective_permissions("env", &installed.permissions.env, &overrides);
 
     println!(
         "{} Permissions for {}:\n",
@@ -124,33 +131,25 @@ pub fn execute(server: &str, grant: Option<&str>, revoke: Option<&str>) {
         "revoke:".dimmed(),
         format_list(&overrides.revoke)
     );
+
+    println!();
+    println!("  {}", "Effective".bold());
+    println!(
+        "    {} {}",
+        "network:".dimmed(),
+        format_scoped("network", &effective_network)
+    );
+    println!(
+        "    {} {}",
+        "env:".dimmed(),
+        format_scoped("env", &effective_env)
+    );
 }
 
 /// Reads and parses an installed server config file.
 fn read_installed(path: &Path) -> Result<InstalledServer, String> {
     let content = fs::read_to_string(path).map_err(|e| format!("Failed to read config: {e}"))?;
     toml::from_str::<InstalledServer>(&content).map_err(|e| format!("Failed to parse config: {e}"))
-}
-
-/// Loads permission overrides from disk if present.
-fn load_overrides(path: &Path) -> Result<PermissionOverrides, String> {
-    if !path.exists() {
-        return Ok(PermissionOverrides::default());
-    }
-
-    let content = fs::read_to_string(path).map_err(|e| format!("Failed to read overrides: {e}"))?;
-    toml::from_str::<PermissionOverrides>(&content)
-        .map_err(|e| format!("Failed to parse overrides: {e}"))
-}
-
-/// Writes permission overrides to disk.
-fn write_overrides(path: &Path, overrides: &PermissionOverrides) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {e}"))?;
-    }
-    let rendered = toml::to_string_pretty(overrides)
-        .map_err(|e| format!("Failed to serialize overrides: {e}"))?;
-    fs::write(path, rendered).map_err(|e| format!("Failed to write overrides: {e}"))
 }
 
 /// Returns declared permissions from installed metadata.
@@ -171,6 +170,18 @@ fn upsert_permission(perms: &mut Vec<String>, perm: &str) {
         perms.push(perm.to_string());
         perms.sort();
     }
+}
+
+/// Formats effective scoped permissions (e.g. `env:FOO`).
+fn format_scoped(scope: &str, perms: &[String]) -> String {
+    if perms.is_empty() {
+        return "none".dimmed().to_string();
+    }
+    perms
+        .iter()
+        .map(|p| format!("{scope}:{p}"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Removes one permission from the list if present.

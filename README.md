@@ -80,7 +80,7 @@ berth list                     List installed MCP servers
 berth install <server[@version]> Install an MCP server
 berth uninstall <server>       Remove an MCP server
 berth update <server|--all>    Update MCP servers
-berth config <server>          Configure an MCP server
+berth config <server>          Configure an MCP server (`--set`, `--env`, or `--interactive`)
 berth config export [file]     Export installed server config values as TOML bundle
 berth config import <file>     Import server config values from TOML bundle
 

@@ -4,6 +4,7 @@ use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process;
 
@@ -28,14 +29,15 @@ struct ConfigBundle {
 }
 
 /// Executes the `berth config` command.
-pub fn execute(server: &str, path: Option<&str>, set: Option<&str>, env: bool) {
+pub fn execute(server: &str, path: Option<&str>, set: Option<&str>, env: bool, interactive: bool) {
     if server == "export" {
-        if set.is_some() || env {
+        if set.is_some() || env || interactive {
             eprintln!(
-                "{} `config export` does not support {} or {}.",
+                "{} `config export` does not support {}, {}, or {}.",
                 "✗".red().bold(),
                 "--set".bold(),
-                "--env".bold()
+                "--env".bold(),
+                "--interactive".bold()
             );
             process::exit(1);
         }
@@ -44,12 +46,13 @@ pub fn execute(server: &str, path: Option<&str>, set: Option<&str>, env: bool) {
     }
 
     if server == "import" {
-        if set.is_some() || env {
+        if set.is_some() || env || interactive {
             eprintln!(
-                "{} `config import` does not support {} or {}.",
+                "{} `config import` does not support {}, {}, or {}.",
                 "✗".red().bold(),
                 "--set".bold(),
-                "--env".bold()
+                "--env".bold(),
+                "--interactive".bold()
             );
             process::exit(1);
         }
@@ -98,16 +101,169 @@ pub fn execute(server: &str, path: Option<&str>, set: Option<&str>, env: bool) {
     }
 
     if env {
+        if interactive {
+            eprintln!(
+                "{} {} cannot be used with {}.",
+                "✗".red().bold(),
+                "--env".bold(),
+                "--interactive".bold()
+            );
+            process::exit(1);
+        }
         show_env(server);
         return;
     }
 
     if let Some(kv) = set {
+        if interactive {
+            eprintln!(
+                "{} {} cannot be used with {}.",
+                "✗".red().bold(),
+                "--set".bold(),
+                "--interactive".bold()
+            );
+            process::exit(1);
+        }
         set_config(server, kv, &config_path);
         return;
     }
 
+    if interactive {
+        prompt_config(server, &config_path);
+        return;
+    }
+
     show_config(server, &config_path);
+}
+
+/// Prompts interactively for required and optional values, then persists the config.
+fn prompt_config(server: &str, config_path: &Path) {
+    let content = match fs::read_to_string(config_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{} Failed to read config: {}", "✗".red().bold(), e);
+            process::exit(1);
+        }
+    };
+
+    let mut installed: InstalledServer = match toml::from_str(&content) {
+        Ok(i) => i,
+        Err(e) => {
+            eprintln!("{} Failed to parse config: {}", "✗".red().bold(), e);
+            process::exit(1);
+        }
+    };
+
+    let registry = Registry::from_seed();
+    let meta = match registry.get(server) {
+        Some(m) => m,
+        None => {
+            eprintln!(
+                "{} Server {} not found in the registry.",
+                "✗".red().bold(),
+                server.cyan()
+            );
+            process::exit(1);
+        }
+    };
+
+    println!(
+        "{} Interactive configuration for {} (press Enter to keep current value):\n",
+        "✓".green().bold(),
+        server.cyan()
+    );
+
+    for field in meta
+        .config
+        .required
+        .iter()
+        .chain(meta.config.optional.iter())
+    {
+        let current = installed
+            .config
+            .get(&field.key)
+            .cloned()
+            .unwrap_or_default();
+        let prompt = if current.is_empty() {
+            format!(
+                "{} {} - {}: ",
+                if meta.config.required.iter().any(|f| f.key == field.key) {
+                    "[required]".yellow().bold().to_string()
+                } else {
+                    "[optional]".dimmed().to_string()
+                },
+                field.key.bold(),
+                field.description.dimmed()
+            )
+        } else {
+            format!(
+                "{} {} - {} [{}]: ",
+                if meta.config.required.iter().any(|f| f.key == field.key) {
+                    "[required]".yellow().bold().to_string()
+                } else {
+                    "[optional]".dimmed().to_string()
+                },
+                field.key.bold(),
+                field.description.dimmed(),
+                current
+            )
+        };
+
+        let input = match prompt_line(&prompt) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("{} Failed to read input: {}", "✗".red().bold(), e);
+                process::exit(1);
+            }
+        };
+
+        if !input.is_empty() {
+            installed.config.insert(field.key.clone(), input);
+        }
+    }
+
+    let missing: Vec<String> = installed
+        .config_meta
+        .required_keys
+        .iter()
+        .filter(|k| installed.config.get(*k).is_none_or(|v| v.trim().is_empty()))
+        .cloned()
+        .collect();
+    if !missing.is_empty() {
+        eprintln!(
+            "{} Missing required config after interactive setup: {}",
+            "✗".red().bold(),
+            missing.join(", ").yellow()
+        );
+        process::exit(1);
+    }
+
+    let rendered = match toml::to_string_pretty(&installed) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("{} Failed to serialize config: {}", "✗".red().bold(), e);
+            process::exit(1);
+        }
+    };
+    if let Err(e) = fs::write(config_path, rendered) {
+        eprintln!("{} Failed to write config: {}", "✗".red().bold(), e);
+        process::exit(1);
+    }
+
+    println!(
+        "\n{} Saved configuration for {}.",
+        "✓".green().bold(),
+        server.cyan()
+    );
+}
+
+/// Prints a prompt and returns the trimmed line entered by the user.
+fn prompt_line(prompt: &str) -> io::Result<String> {
+    print!("{prompt}");
+    io::stdout().flush()?;
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    Ok(input.trim().to_string())
 }
 
 /// Prints configured and required keys for an installed server.

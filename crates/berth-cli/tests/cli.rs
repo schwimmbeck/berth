@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
-use std::process::Command;
+use std::io::Write;
+use std::process::{Command, Stdio};
 
 fn berth() -> Command {
     Command::new(env!("CARGO_BIN_EXE_berth"))
@@ -597,6 +598,49 @@ fn config_set_updates_value() {
     let config_path = tmp.path().join(".berth/servers/github.toml");
     let content = std::fs::read_to_string(config_path).unwrap();
     assert!(content.contains("abc123"));
+}
+
+#[test]
+fn config_interactive_updates_value() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+
+    let mut child = berth_with_home(tmp.path())
+        .args(["config", "github", "--interactive"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"interactive-token\n\n")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+
+    assert!(output.status.success());
+    let config_path = tmp.path().join(".berth/servers/github.toml");
+    let content = std::fs::read_to_string(config_path).unwrap();
+    assert!(content.contains("interactive-token"));
+}
+
+#[test]
+fn config_interactive_conflicts_with_set() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+
+    let output = berth_with_home(tmp.path())
+        .args(["config", "github", "--interactive", "--set", "token=abc123"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
 }
 
 #[test]

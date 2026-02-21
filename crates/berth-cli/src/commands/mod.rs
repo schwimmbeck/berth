@@ -75,6 +75,10 @@ pub enum Commands {
         /// Show required environment variables
         #[arg(long)]
         env: bool,
+
+        /// Prompt interactively for config values
+        #[arg(long)]
+        interactive: bool,
     },
 
     /// Start MCP server(s)
@@ -185,7 +189,8 @@ pub fn execute(command: Commands) {
             path,
             set,
             env,
-        } => config::execute(&server, path.as_deref(), set.as_deref(), env),
+            interactive,
+        } => config::execute(&server, path.as_deref(), set.as_deref(), env, interactive),
         Commands::Start { server } => start::execute(server.as_deref()),
         Commands::Stop { server } => stop::execute(server.as_deref()),
         Commands::Restart { server } => restart::execute(&server),

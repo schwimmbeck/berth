@@ -141,6 +141,36 @@ default = "https://api.github.com"
     std::fs::write(path, manifest.trim_start()).unwrap();
 }
 
+fn write_publish_submission(
+    tmp: &std::path::Path,
+    file_name: &str,
+    submitted_at_epoch_secs: u64,
+    status: &str,
+    server_name: &str,
+) {
+    let queue_dir = tmp.join(".berth").join("publish").join("queue");
+    std::fs::create_dir_all(&queue_dir).unwrap();
+    let payload = serde_json::json!({
+        "submitted_at_epoch_secs": submitted_at_epoch_secs,
+        "status": status,
+        "manifest": {
+            "server": {
+                "name": server_name,
+                "display_name": format!("{server_name} display"),
+                "version": "1.0.0",
+                "maintainer": "Acme",
+                "category": "developer-tools"
+            }
+        },
+        "quality_checks": [
+            {"name": "schema", "passed": true, "detail": "ok"},
+            {"name": "security", "passed": false, "detail": "failed"}
+        ]
+    });
+    let path = queue_dir.join(file_name);
+    std::fs::write(path, serde_json::to_string_pretty(&payload).unwrap()).unwrap();
+}
+
 fn write_github_raw_manifest(
     raw_base: &std::path::Path,
     repo: &str,
@@ -565,13 +595,27 @@ fn version_flag() {
 #[test]
 fn registry_api_serves_health_search_and_downloads() {
     let tmp = tempfile::tempdir().unwrap();
+    write_publish_submission(
+        tmp.path(),
+        "github-200.json",
+        200,
+        "pending-manual-review",
+        "github",
+    );
+    write_publish_submission(
+        tmp.path(),
+        "filesystem-100.json",
+        100,
+        "approved",
+        "filesystem",
+    );
     let mut child = berth_with_home(tmp.path())
         .args([
             "registry-api",
             "--bind",
             "127.0.0.1:0",
             "--max-requests",
-            "26",
+            "27",
         ])
         .stdout(Stdio::piped())
         .spawn()
@@ -740,6 +784,23 @@ fn registry_api_serves_health_search_and_downloads() {
     assert_eq!(
         global_reports["reports"][0]["server"].as_str(),
         Some("github")
+    );
+
+    let (submissions_status, submissions_body) = http_get(
+        &addr,
+        "/publish/submissions?status=pending-manual-review&server=github&limit=1",
+    );
+    assert_eq!(submissions_status, 200);
+    let submissions: serde_json::Value = serde_json::from_str(&submissions_body).unwrap();
+    assert_eq!(submissions["total"].as_u64(), Some(1));
+    assert_eq!(submissions["count"].as_u64(), Some(1));
+    assert_eq!(
+        submissions["submissions"][0]["server"]["name"].as_str(),
+        Some("github")
+    );
+    assert_eq!(
+        submissions["submissions"][0]["qualityChecksPassed"].as_u64(),
+        Some(1)
     );
 
     let (site_reports_status, site_reports_headers, site_reports_body) =

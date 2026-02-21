@@ -21,6 +21,7 @@ const MAX_REQUEST_BYTES: usize = 16 * 1024;
 #[derive(Debug)]
 struct ApiState {
     community_dir: PathBuf,
+    publish_queue_dir: PathBuf,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -131,9 +132,61 @@ struct SiteReportsUrlParams<'a> {
     offset: usize,
 }
 
+#[derive(Debug, Deserialize)]
+struct QueueSubmissionFile {
+    submitted_at_epoch_secs: u64,
+    status: String,
+    manifest: QueueManifest,
+    #[serde(default)]
+    quality_checks: Vec<QueueQualityCheck>,
+}
+
+#[derive(Debug, Deserialize)]
+struct QueueManifest {
+    server: QueueServer,
+}
+
+#[derive(Debug, Deserialize)]
+struct QueueServer {
+    name: String,
+    display_name: String,
+    version: String,
+    maintainer: String,
+    category: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct QueueQualityCheck {
+    passed: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PublishSubmissionSummary {
+    id: String,
+    submitted_at_epoch_secs: u64,
+    status: String,
+    server: PublishSubmissionServerSummary,
+    quality_checks_passed: usize,
+    quality_checks_total: usize,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PublishSubmissionServerSummary {
+    name: String,
+    display_name: String,
+    version: String,
+    maintainer: String,
+    category: String,
+}
+
 impl ApiState {
-    fn new(community_dir: PathBuf) -> Self {
-        Self { community_dir }
+    fn new(community_dir: PathBuf, publish_queue_dir: PathBuf) -> Self {
+        Self {
+            community_dir,
+            publish_queue_dir,
+        }
     }
 
     fn snapshot_path(&self) -> PathBuf {
@@ -146,6 +199,10 @@ impl ApiState {
 
     fn report_path(&self, server: &str) -> PathBuf {
         self.reports_dir().join(format!("{server}.jsonl"))
+    }
+
+    fn publish_queue_dir(&self) -> PathBuf {
+        self.publish_queue_dir.clone()
     }
 
     fn load_snapshot(&self) -> Result<CommunitySnapshot, String> {
@@ -304,6 +361,71 @@ impl ApiState {
         Ok(reports)
     }
 
+    fn list_publish_submissions(&self) -> Result<Vec<PublishSubmissionSummary>, String> {
+        let queue_dir = self.publish_queue_dir();
+        if !queue_dir.exists() {
+            return Ok(Vec::new());
+        }
+        let entries = fs::read_dir(&queue_dir).map_err(|e| {
+            format!(
+                "failed to read publish queue directory {}: {e}",
+                queue_dir.display()
+            )
+        })?;
+
+        let mut submissions = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|e| {
+                format!(
+                    "failed to enumerate publish queue directory {}: {e}",
+                    queue_dir.display()
+                )
+            })?;
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                continue;
+            }
+            let content = fs::read_to_string(&path)
+                .map_err(|e| format!("failed to read queue file {}: {e}", path.display()))?;
+            let payload = serde_json::from_str::<QueueSubmissionFile>(&content)
+                .map_err(|e| format!("failed to parse queue file {}: {e}", path.display()))?;
+
+            let id = path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or_default()
+                .to_string();
+            if id.is_empty() {
+                continue;
+            }
+
+            let quality_checks_passed = payload.quality_checks.iter().filter(|c| c.passed).count();
+            let quality_checks_total = payload.quality_checks.len();
+            submissions.push(PublishSubmissionSummary {
+                id,
+                submitted_at_epoch_secs: payload.submitted_at_epoch_secs,
+                status: payload.status,
+                server: PublishSubmissionServerSummary {
+                    name: payload.manifest.server.name,
+                    display_name: payload.manifest.server.display_name,
+                    version: payload.manifest.server.version,
+                    maintainer: payload.manifest.server.maintainer,
+                    category: payload.manifest.server.category,
+                },
+                quality_checks_passed,
+                quality_checks_total,
+            });
+        }
+
+        submissions.sort_by(|left, right| {
+            right
+                .submitted_at_epoch_secs
+                .cmp(&left.submitted_at_epoch_secs)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        Ok(submissions)
+    }
+
     fn list_verified_publishers(&self) -> Result<Vec<String>, String> {
         let snapshot = self.load_snapshot()?;
         let mut normalized: Vec<String> = snapshot
@@ -382,7 +504,9 @@ pub fn execute(bind: &str, max_requests: Option<u32>) {
     let community_dir = paths::berth_home()
         .map(|home| home.join("registry").join("community"))
         .unwrap_or_else(|| PathBuf::from(".berth/registry/community"));
-    let state = ApiState::new(community_dir);
+    let publish_queue_dir =
+        paths::publish_queue_dir().unwrap_or_else(|| PathBuf::from(".berth/publish/queue"));
+    let state = ApiState::new(community_dir, publish_queue_dir);
     let mut handled: u32 = 0;
     for stream in listener.incoming() {
         let mut stream = match stream {
@@ -1891,6 +2015,17 @@ fn route_request(request: &HttpRequest, registry: &Registry, state: &ApiState) -
             }
             route_servers_trending(query, registry, state)
         }
+        "/publish/submissions" => {
+            if method != "GET" {
+                return (
+                    405,
+                    json!({
+                        "error": "method not allowed"
+                    }),
+                );
+            }
+            route_publish_submissions(query, state)
+        }
         "/publishers/verified" => {
             if method != "GET" {
                 return (
@@ -2349,6 +2484,58 @@ fn route_reports(query: Option<&str>, state: &ApiState) -> (u16, Value) {
                         "reason": reason_filter
                     },
                     "reports": reports
+                }),
+            )
+        }
+        Err(e) => (
+            500,
+            json!({
+                "error": "internal error",
+                "detail": e
+            }),
+        ),
+    }
+}
+
+fn route_publish_submissions(query: Option<&str>, state: &ApiState) -> (u16, Value) {
+    let limit = parse_usize_param(query, "limit").unwrap_or(25).min(200);
+    let offset = parse_usize_param(query, "offset").unwrap_or(0);
+    let status_filter = query_param(query, "status")
+        .map(url_decode)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let server_filter = query_param(query, "server")
+        .map(url_decode)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    match state.list_publish_submissions() {
+        Ok(mut submissions) => {
+            if let Some(status) = &status_filter {
+                submissions.retain(|item| item.status.eq_ignore_ascii_case(status));
+            }
+            if let Some(server) = &server_filter {
+                submissions.retain(|item| item.server.name.eq_ignore_ascii_case(server));
+            }
+            let total = submissions.len();
+            let submissions = submissions
+                .into_iter()
+                .skip(offset)
+                .take(limit)
+                .collect::<Vec<_>>();
+            let count = submissions.len();
+            (
+                200,
+                json!({
+                    "total": total,
+                    "count": count,
+                    "offset": offset,
+                    "limit": limit,
+                    "filters": {
+                        "status": status_filter,
+                        "server": server_filter
+                    },
+                    "submissions": submissions
                 }),
             )
         }
@@ -3562,9 +3749,40 @@ mod tests {
                 .unwrap_or_default()
                 .as_nanos()
         );
-        let path = std::env::temp_dir().join(unique).join("community");
-        std::fs::create_dir_all(&path).unwrap();
-        ApiState::new(path)
+        let root = std::env::temp_dir().join(unique);
+        let community_path = root.join("community");
+        let queue_path = root.join("publish").join("queue");
+        std::fs::create_dir_all(&community_path).unwrap();
+        std::fs::create_dir_all(&queue_path).unwrap();
+        ApiState::new(community_path, queue_path)
+    }
+
+    fn seed_publish_submission(
+        state: &ApiState,
+        file_name: &str,
+        submitted_at_epoch_secs: u64,
+        status: &str,
+        server_name: &str,
+    ) {
+        let path = state.publish_queue_dir.join(file_name);
+        let payload = json!({
+            "submitted_at_epoch_secs": submitted_at_epoch_secs,
+            "status": status,
+            "manifest": {
+                "server": {
+                    "name": server_name,
+                    "display_name": format!("{server_name} display"),
+                    "version": "1.0.0",
+                    "maintainer": "Acme",
+                    "category": "developer-tools"
+                }
+            },
+            "quality_checks": [
+                {"name": "schema", "passed": true, "detail": "ok"},
+                {"name": "security", "passed": false, "detail": "failed"}
+            ]
+        });
+        std::fs::write(path, serde_json::to_string_pretty(&payload).unwrap()).unwrap();
     }
 
     fn req(method: &str, target: &str) -> HttpRequest {
@@ -3949,6 +4167,61 @@ mod tests {
         assert_eq!(abuse_status, 200);
         assert_eq!(abuse_body["total"].as_u64(), Some(1));
         assert_eq!(abuse_body["reports"][0]["reason"].as_str(), Some("abuse"));
+    }
+
+    #[test]
+    fn route_request_supports_publish_submissions_endpoint() {
+        let registry = Registry::from_seed();
+        let state = test_state();
+
+        seed_publish_submission(
+            &state,
+            "github-200.json",
+            200,
+            "pending-manual-review",
+            "github",
+        );
+        seed_publish_submission(&state, "filesystem-100.json", 100, "approved", "filesystem");
+
+        let (status, body) = route_request(
+            &req("GET", "/publish/submissions?limit=1&offset=0"),
+            &registry,
+            &state,
+        );
+        assert_eq!(status, 200);
+        assert_eq!(body["total"].as_u64(), Some(2));
+        assert_eq!(body["count"].as_u64(), Some(1));
+        assert_eq!(
+            body["submissions"][0]["server"]["name"].as_str(),
+            Some("github")
+        );
+        assert_eq!(
+            body["submissions"][0]["qualityChecksPassed"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            body["submissions"][0]["qualityChecksTotal"].as_u64(),
+            Some(2)
+        );
+
+        let (pending_status, pending_body) = route_request(
+            &req(
+                "GET",
+                "/publish/submissions?status=pending-manual-review&server=github",
+            ),
+            &registry,
+            &state,
+        );
+        assert_eq!(pending_status, 200);
+        assert_eq!(pending_body["total"].as_u64(), Some(1));
+        assert_eq!(
+            pending_body["submissions"][0]["status"].as_str(),
+            Some("pending-manual-review")
+        );
+        assert_eq!(
+            pending_body["submissions"][0]["server"]["name"].as_str(),
+            Some("github")
+        );
     }
 
     #[test]

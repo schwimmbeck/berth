@@ -97,6 +97,16 @@ Runtime policy config keys:
 - `berth.auto-restart` (`true` or `false`)
 - `berth.max-restarts` (positive integer, default `3`)
 
+Security behavior examples:
+- Env secret filtering at launch:
+  - `berth permissions github --revoke env:GITHUB_TOKEN`
+  - `berth start github` (server starts without `GITHUB_TOKEN` exposed)
+- Network hard block:
+  - `berth permissions github --revoke network:*`
+  - `berth start github` (blocked with exit code `1`)
+- Audit export for review:
+  - `berth audit github --since 24h --json --export audit.json`
+
 ## Supported MCP Servers (seed registry)
 
 Berth ships with a built-in registry of popular MCP servers:

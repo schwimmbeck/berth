@@ -34,3 +34,31 @@ berth audit github --export audit.jsonl
 - launch and link flows apply effective env permissions
 - full network revocation blocks launch/proxy and is recorded in audit
 - audit data is stored as JSONL for deterministic parsing
+
+## Behavior Examples
+
+### 1. Revoke secret exposure
+
+```bash
+berth permissions github --revoke env:GITHUB_TOKEN
+berth start github
+```
+
+Expected behavior: process can launch, but `GITHUB_TOKEN` is filtered out from the runtime env map.
+
+### 2. Block all network access
+
+```bash
+berth permissions github --revoke network:*
+berth start github
+```
+
+Expected behavior: launch is blocked with exit code `1`, and a denial event is written to the audit log.
+
+### 3. Export auditable events
+
+```bash
+berth audit github --since 24h --json --export audit.json
+```
+
+Expected behavior: matching events are exported as a JSON array for machine review.

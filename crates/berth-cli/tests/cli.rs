@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::process::Command;
 
 fn berth() -> Command {
@@ -322,6 +323,88 @@ fn help_shows_subcommands() {
     assert!(stdout.contains("search"));
     assert!(stdout.contains("install"));
     assert!(stdout.contains("start"));
+}
+
+#[test]
+fn readme_command_list_matches_cli_help_commands() {
+    let output = berth().arg("--help").output().unwrap();
+    assert!(output.status.success());
+    let help = String::from_utf8_lossy(&output.stdout);
+
+    let mut help_commands = BTreeSet::new();
+    let mut in_commands = false;
+    for line in help.lines() {
+        let trimmed = line.trim();
+        if trimmed == "Commands:" {
+            in_commands = true;
+            continue;
+        }
+        if !in_commands {
+            continue;
+        }
+        if trimmed.is_empty() {
+            break;
+        }
+        if let Some(cmd) = trimmed.split_whitespace().next() {
+            if cmd != "help" {
+                help_commands.insert(cmd.to_string());
+            }
+        }
+    }
+    assert!(
+        !help_commands.is_empty(),
+        "No commands found in `berth --help`."
+    );
+
+    let readme_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../README.md");
+    let readme = std::fs::read_to_string(&readme_path)
+        .unwrap_or_else(|e| panic!("Failed to read {}: {e}", readme_path.display()));
+
+    let commands_header = "## Commands";
+    let section_start = readme
+        .find(commands_header)
+        .expect("README is missing `## Commands` header.");
+    let section = &readme[section_start + commands_header.len()..];
+    let fence_start = section
+        .find("```")
+        .expect("README `## Commands` section is missing opening code fence.");
+    let after_fence = &section[fence_start + 3..];
+    let fence_end = after_fence
+        .find("```")
+        .expect("README `## Commands` section is missing closing code fence.");
+    let commands_block = &after_fence[..fence_end];
+
+    let mut readme_commands = BTreeSet::new();
+    for line in commands_block.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("berth ") {
+            if let Some(cmd) = rest.split_whitespace().next() {
+                if !cmd.is_empty() {
+                    readme_commands.insert(cmd.to_string());
+                }
+            }
+        }
+    }
+    assert!(
+        !readme_commands.is_empty(),
+        "No commands found in README command block."
+    );
+
+    let missing_in_readme: Vec<String> = help_commands
+        .difference(&readme_commands)
+        .cloned()
+        .collect();
+    let missing_in_help: Vec<String> = readme_commands
+        .difference(&help_commands)
+        .cloned()
+        .collect();
+
+    assert!(
+        missing_in_readme.is_empty() && missing_in_help.is_empty(),
+        "README command block is out of sync with `berth --help`.\nMissing in README: {:?}\nMissing in help: {:?}",
+        missing_in_readme,
+        missing_in_help
+    );
 }
 
 #[test]

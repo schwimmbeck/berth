@@ -70,6 +70,7 @@ berth list
 | MCP audit trail | Working | JSONL audit events for lifecycle actions with server/time filters |
 | AI client integration | Working | Auto-configure Claude Desktop, Cursor, Windsurf, Continue, and VS Code |
 | Registry API (local) | Working | Serve REST endpoints for health, search, server detail, and download counts from the current registry dataset |
+| Registry publish workflow | Working | Validate `berth.toml`, run local quality checks, and enqueue submission artifacts for manual review |
 
 ## Commands
 
@@ -97,6 +98,7 @@ berth link <client>            Link Berth-managed servers to claude-desktop, cur
 berth unlink <client>          Unlink Berth-managed servers from claude-desktop, cursor, windsurf, continue, or vscode
 berth proxy <server>           Run as transparent MCP proxy
 berth registry-api             Serve local registry REST API (supports --bind and --max-requests)
+berth publish [manifest]       Validate + submit `berth.toml` to local review queue (`--dry-run` available)
 ```
 
 Registry API endpoints:

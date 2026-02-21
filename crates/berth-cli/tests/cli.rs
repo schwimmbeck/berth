@@ -40,6 +40,58 @@ fn write_registry_override(path: &std::path::Path, servers: serde_json::Value) {
     std::fs::write(path, rendered).unwrap();
 }
 
+fn write_publish_manifest(path: &std::path::Path) {
+    let manifest = r#"
+[server]
+name = "acme-github"
+display_name = "Acme GitHub MCP Server"
+description = "GitHub integration for Acme"
+version = "1.0.0"
+category = "developer-tools"
+maintainer = "Acme Inc"
+trust_level = "community"
+
+[source]
+type = "npm"
+package = "@acme/mcp-github"
+repository = "https://github.com/acme/mcp-github"
+
+[runtime]
+type = "node"
+command = "npx"
+args = ["-y", "@acme/mcp-github"]
+transport = "stdio"
+
+[permissions]
+network = ["api.github.com:443"]
+env = ["GITHUB_TOKEN"]
+filesystem = ["read:/workspace"]
+exec = ["git"]
+
+[compatibility]
+clients = ["claude-desktop", "cursor"]
+platforms = ["macos", "linux", "windows"]
+
+[quality]
+security_scan = "passed"
+health_check = true
+last_verified = "2026-02-21"
+downloads = 0
+
+[[config.required]]
+key = "token"
+env = "GITHUB_TOKEN"
+description = "GitHub token"
+sensitive = true
+
+[[config.optional]]
+key = "api_url"
+description = "Override API URL"
+default = "https://api.github.com"
+"#;
+    std::fs::write(path, manifest.trim_start()).unwrap();
+}
+
 fn patch_runtime_to_long_running(tmp: &std::path::Path, server: &str) {
     let config_path = tmp.join(".berth/servers").join(format!("{server}.toml"));
     let content = std::fs::read_to_string(&config_path).unwrap();
@@ -519,6 +571,84 @@ fn registry_api_serves_health_search_and_downloads() {
 
     let status = child.wait().unwrap();
     assert!(status.success());
+}
+
+#[test]
+fn publish_dry_run_valid_manifest_succeeds() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_publish_manifest(&tmp.path().join("berth.toml"));
+
+    let output = berth_with_home(tmp.path())
+        .current_dir(tmp.path())
+        .args(["publish", "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("passed validation and quality checks"));
+}
+
+#[test]
+fn publish_missing_manifest_exits_1() {
+    let tmp = tempfile::tempdir().unwrap();
+
+    let output = berth_with_home(tmp.path())
+        .current_dir(tmp.path())
+        .args(["publish", "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Failed to read manifest"));
+}
+
+#[test]
+fn publish_invalid_manifest_exits_1() {
+    let tmp = tempfile::tempdir().unwrap();
+    let manifest_path = tmp.path().join("berth.toml");
+    write_publish_manifest(&manifest_path);
+    let bad = std::fs::read_to_string(&manifest_path)
+        .unwrap()
+        .replace("transport = \"stdio\"", "transport = \"http\"")
+        .replace("env = [\"GITHUB_TOKEN\"]", "env = [\"bad-var\"]");
+    std::fs::write(&manifest_path, bad).unwrap();
+
+    let output = berth_with_home(tmp.path())
+        .current_dir(tmp.path())
+        .args(["publish", "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Manifest validation failed"));
+}
+
+#[test]
+fn publish_writes_submission_queue_entry() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_publish_manifest(&tmp.path().join("berth.toml"));
+
+    let output = berth_with_home(tmp.path())
+        .current_dir(tmp.path())
+        .args(["publish"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Submitted"));
+
+    let queue_dir = tmp.path().join(".berth").join("publish").join("queue");
+    let entries: Vec<_> = std::fs::read_dir(&queue_dir).unwrap().collect();
+    assert_eq!(entries.len(), 1);
+
+    let entry_path = entries[0].as_ref().unwrap().path();
+    let payload = std::fs::read_to_string(entry_path).unwrap();
+    let submission: serde_json::Value = serde_json::from_str(&payload).unwrap();
+    assert_eq!(
+        submission["manifest"]["server"]["name"].as_str(),
+        Some("acme-github")
+    );
+    assert_eq!(submission["status"].as_str(), Some("pending-manual-review"));
 }
 
 // --- install ---

@@ -9,6 +9,7 @@ pub mod list;
 pub mod logs;
 pub mod permissions;
 pub mod proxy;
+pub mod publish;
 pub mod registry_api;
 pub mod restart;
 pub mod search;
@@ -180,6 +181,16 @@ pub enum Commands {
         server: String,
     },
 
+    /// Publish an MCP server manifest to the registry review queue
+    Publish {
+        /// Path to berth manifest file
+        manifest: Option<String>,
+
+        /// Validate only; do not submit
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// Serve local registry REST API endpoints
     RegistryApi {
         /// Bind address (host:port)
@@ -257,6 +268,7 @@ pub fn execute(command: Commands) {
         Commands::Link { client } => link::execute(&client),
         Commands::Unlink { client } => unlink::execute(&client),
         Commands::Proxy { server } => proxy::execute(&server),
+        Commands::Publish { manifest, dry_run } => publish::execute(manifest.as_deref(), dry_run),
         Commands::RegistryApi { bind, max_requests } => registry_api::execute(&bind, max_requests),
         Commands::Supervise { server } => supervise::execute(&server),
     }

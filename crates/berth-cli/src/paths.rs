@@ -36,6 +36,11 @@ pub fn audit_log_path() -> Option<PathBuf> {
     berth_home().map(|h| h.join("audit").join("audit.jsonl"))
 }
 
+/// Returns the local publish queue directory path.
+pub fn publish_queue_dir() -> Option<PathBuf> {
+    berth_home().map(|h| h.join("publish").join("queue"))
+}
+
 /// Returns a client MCP config path for the current platform.
 pub fn client_config_path(client: &str) -> Option<PathBuf> {
     let (dir_name, file_name) = match client {

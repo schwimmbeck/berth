@@ -9,6 +9,7 @@ berth list
 berth install <server[@version]>
 berth uninstall <server>
 berth update <server|--all>
+berth publish [manifest]
 berth config <server>
 berth config <server> --interactive
 berth config <server> --set key=value --secure

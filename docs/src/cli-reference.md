@@ -59,7 +59,7 @@ Registry API endpoints:
 - `GET /servers/<name>/related` with optional `limit`, `offset`
 - `GET /servers/<name>/downloads`
 - `GET /servers/<name>/community`
-- `GET /servers/<name>/reports` with optional `limit`
+- `GET /servers/<name>/reports` with optional `limit`, `offset`
 - `GET /reports` with optional `server`, `reason`, `offset`, and `limit`
 - `POST /servers/<name>/star`
 - `POST /servers/<name>/report`

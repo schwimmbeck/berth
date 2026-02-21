@@ -3219,10 +3219,15 @@ fn route_server_reports(
     state: &ApiState,
 ) -> (u16, Value) {
     let limit = parse_usize_param(query, "limit").unwrap_or(20).min(100);
+    let offset = parse_usize_param(query, "offset").unwrap_or(0);
     match state.list_reports(&server.name) {
         Ok(events) => {
             let total = events.len();
-            let reports = events.into_iter().take(limit).collect::<Vec<_>>();
+            let reports = events
+                .into_iter()
+                .skip(offset)
+                .take(limit)
+                .collect::<Vec<_>>();
             let count = reports.len();
             (
                 200,
@@ -3230,6 +3235,7 @@ fn route_server_reports(
                     "server": server.name,
                     "total": total,
                     "count": count,
+                    "offset": offset,
                     "limit": limit,
                     "reports": reports
                 }),
@@ -4035,22 +4041,33 @@ mod tests {
         assert_eq!(report_body["status"].as_str(), Some("received"));
         assert_eq!(report_body["reports"].as_u64(), Some(1));
 
+        let second_report_req = HttpRequest {
+            method: "POST".to_string(),
+            target: "/servers/github/report".to_string(),
+            body: "{\"reason\":\"abuse\",\"details\":\"unsafe behavior\"}".to_string(),
+        };
+        let (second_report_status, second_report_body) =
+            route_request(&second_report_req, &registry, &state);
+        assert_eq!(second_report_status, 200);
+        assert_eq!(second_report_body["reports"].as_u64(), Some(2));
+
         let (community_status, community_body) =
             route_request(&req("GET", "/servers/github/community"), &registry, &state);
         assert_eq!(community_status, 200);
         assert_eq!(community_body["stars"].as_u64(), Some(1));
-        assert_eq!(community_body["reports"].as_u64(), Some(1));
+        assert_eq!(community_body["reports"].as_u64(), Some(2));
 
         let (reports_status, reports_body) = route_request(
-            &req("GET", "/servers/github/reports?limit=1"),
+            &req("GET", "/servers/github/reports?limit=1&offset=1"),
             &registry,
             &state,
         );
         assert_eq!(reports_status, 200);
         assert_eq!(reports_body["server"].as_str(), Some("github"));
         assert_eq!(reports_body["count"].as_u64(), Some(1));
-        assert!(reports_body["total"].as_u64().unwrap_or(0) >= 1);
-        assert_eq!(reports_body["reports"][0]["reason"].as_str(), Some("spam"));
+        assert_eq!(reports_body["offset"].as_u64(), Some(1));
+        assert!(reports_body["total"].as_u64().unwrap_or(0) >= 2);
+        assert!(reports_body["reports"][0]["reason"].as_str().is_some());
     }
 
     #[test]

@@ -722,11 +722,13 @@ fn registry_api_serves_health_search_and_downloads() {
     assert!(community["stars"].as_u64().unwrap_or(0) >= 1);
     assert!(community["reports"].as_u64().unwrap_or(0) >= 1);
 
-    let (reports_status, reports_body) = http_get(&addr, "/servers/github/reports?limit=1");
+    let (reports_status, reports_body) =
+        http_get(&addr, "/servers/github/reports?limit=1&offset=0");
     assert_eq!(reports_status, 200);
     let reports: serde_json::Value = serde_json::from_str(&reports_body).unwrap();
     assert_eq!(reports["server"].as_str(), Some("github"));
     assert_eq!(reports["count"].as_u64(), Some(1));
+    assert_eq!(reports["offset"].as_u64(), Some(0));
     assert!(reports["total"].as_u64().unwrap_or(0) >= 1);
     assert_eq!(reports["reports"][0]["reason"].as_str(), Some("spam"));
 

@@ -115,6 +115,7 @@ Registry API endpoints:
 - `GET /servers/<name>/related?limit=<n>`
 - `GET /servers/<name>/downloads`
 - `GET /servers/<name>/community`
+- `GET /servers/<name>/reports?limit=<n>`
 - `POST /servers/<name>/star`
 - `POST /servers/<name>/report`
 - `GET /publishers/verified`

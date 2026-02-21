@@ -124,6 +124,10 @@ impl ApiState {
         self.community_dir.join("reports")
     }
 
+    fn report_path(&self, server: &str) -> PathBuf {
+        self.reports_dir().join(format!("{server}.jsonl"))
+    }
+
     fn load_snapshot(&self) -> Result<CommunitySnapshot, String> {
         let path = self.snapshot_path();
         if !path.exists() {
@@ -179,7 +183,7 @@ impl ApiState {
                 reports_dir.display()
             )
         })?;
-        let report_path = reports_dir.join(format!("{server}.jsonl"));
+        let report_path = self.report_path(server);
         let event = ReportEvent {
             timestamp_epoch_secs: now_epoch_secs(),
             server: server.to_string(),
@@ -196,6 +200,37 @@ impl ApiState {
         writeln!(file, "{line}")
             .map_err(|e| format!("failed to append report {}: {e}", report_path.display()))?;
         Ok(report_count)
+    }
+
+    fn list_reports(&self, server: &str) -> Result<Vec<ReportEvent>, String> {
+        let report_path = self.report_path(server);
+        if !report_path.exists() {
+            return Ok(Vec::new());
+        }
+        let content = fs::read_to_string(&report_path)
+            .map_err(|e| format!("failed to read report file {}: {e}", report_path.display()))?;
+        let mut reports = Vec::new();
+        for (idx, line) in content.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let event = serde_json::from_str::<ReportEvent>(trimmed).map_err(|e| {
+                format!(
+                    "failed to parse report file {} at line {}: {e}",
+                    report_path.display(),
+                    idx + 1
+                )
+            })?;
+            reports.push(event);
+        }
+        reports.sort_by(|left, right| {
+            right
+                .timestamp_epoch_secs
+                .cmp(&left.timestamp_epoch_secs)
+                .then_with(|| left.reason.cmp(&right.reason))
+        });
+        Ok(reports)
     }
 
     fn list_verified_publishers(&self) -> Result<Vec<String>, String> {
@@ -1407,7 +1442,7 @@ fn compare_listed_servers(
     }
 }
 
-/// Routes `/servers/<name>` detail/community/star/report/related paths.
+/// Routes `/servers/<name>` detail/community/star/report/reports/related paths.
 fn route_server_detail(
     method: &str,
     path: &str,
@@ -1554,6 +1589,17 @@ fn route_server_detail(
                 );
             }
             route_server_report(server, body, state)
+        }
+        Some("reports") => {
+            if method != "GET" {
+                return (
+                    405,
+                    json!({
+                        "error": "method not allowed"
+                    }),
+                );
+            }
+            route_server_reports(server, query, state)
         }
         _ => (
             404,
@@ -1751,6 +1797,38 @@ fn route_server_report(server: &ServerMetadata, body: &str, state: &ApiState) ->
                 "reports": reports
             }),
         ),
+        Err(e) => (
+            500,
+            json!({
+                "error": "internal error",
+                "detail": e
+            }),
+        ),
+    }
+}
+
+fn route_server_reports(
+    server: &ServerMetadata,
+    query: Option<&str>,
+    state: &ApiState,
+) -> (u16, Value) {
+    let limit = parse_usize_param(query, "limit").unwrap_or(20).min(100);
+    match state.list_reports(&server.name) {
+        Ok(events) => {
+            let total = events.len();
+            let reports = events.into_iter().take(limit).collect::<Vec<_>>();
+            let count = reports.len();
+            (
+                200,
+                json!({
+                    "server": server.name,
+                    "total": total,
+                    "count": count,
+                    "limit": limit,
+                    "reports": reports
+                }),
+            )
+        }
         Err(e) => (
             500,
             json!({
@@ -2358,6 +2436,17 @@ mod tests {
         assert_eq!(community_status, 200);
         assert_eq!(community_body["stars"].as_u64(), Some(1));
         assert_eq!(community_body["reports"].as_u64(), Some(1));
+
+        let (reports_status, reports_body) = route_request(
+            &req("GET", "/servers/github/reports?limit=1"),
+            &registry,
+            &state,
+        );
+        assert_eq!(reports_status, 200);
+        assert_eq!(reports_body["server"].as_str(), Some("github"));
+        assert_eq!(reports_body["count"].as_u64(), Some(1));
+        assert!(reports_body["total"].as_u64().unwrap_or(0) >= 1);
+        assert_eq!(reports_body["reports"][0]["reason"].as_str(), Some("spam"));
     }
 
     #[test]

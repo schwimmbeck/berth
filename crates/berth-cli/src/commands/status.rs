@@ -1,13 +1,21 @@
 //! Command handler for `berth status`.
 
 use colored::Colorize;
+use serde::Deserialize;
 use std::fs;
 use std::process;
+use std::process::Command;
 
 use berth_registry::config::InstalledServer;
 use berth_runtime::{RuntimeManager, ServerStatus};
 
 use crate::paths;
+
+#[derive(Debug, Deserialize)]
+struct RuntimeStateSnapshot {
+    #[serde(default)]
+    pid: Option<u32>,
+}
 
 /// Executes the `berth status` command.
 pub fn execute() {
@@ -59,12 +67,14 @@ pub fn execute() {
 
     println!("{} MCP server status:\n", "✓".green().bold());
     println!(
-        "  {:<20} {:<12} {:<12}",
+        "  {:<20} {:<12} {:<12} {:<8} {:<12}",
         "NAME".bold(),
         "VERSION".bold(),
         "STATUS".bold(),
+        "PID".bold(),
+        "MEMORY".bold(),
     );
-    println!("  {}", "─".repeat(50));
+    println!("  {}", "─".repeat(72));
 
     let mut had_error = false;
     for entry in &entries {
@@ -89,20 +99,36 @@ pub fn execute() {
             }
         };
 
-        let status_display = match runtime.status(&name) {
-            Ok(ServerStatus::Running) => "running".green().to_string(),
-            Ok(ServerStatus::Stopped) => "stopped".dimmed().to_string(),
+        let (status_display, pid_display, memory_display) = match runtime.status(&name) {
+            Ok(ServerStatus::Running) => {
+                let pid = read_runtime_pid(&name);
+                let pid_display = pid
+                    .map(|p| p.to_string())
+                    .unwrap_or_else(|| "-".to_string());
+                let memory_display = pid
+                    .and_then(resident_memory_kib)
+                    .map(|kib| format!("{kib} KiB"))
+                    .unwrap_or_else(|| "-".to_string());
+                ("running".green().to_string(), pid_display, memory_display)
+            }
+            Ok(ServerStatus::Stopped) => (
+                "stopped".dimmed().to_string(),
+                "-".to_string(),
+                "-".to_string(),
+            ),
             Err(_) => {
                 had_error = true;
-                "error".red().to_string()
+                ("error".red().to_string(), "-".to_string(), "-".to_string())
             }
         };
 
         println!(
-            "  {:<20} {:<12} {:<12}",
+            "  {:<20} {:<12} {:<12} {:<8} {:<12}",
             name.cyan(),
             version,
-            status_display
+            status_display,
+            pid_display,
+            memory_display
         );
     }
     println!();
@@ -110,4 +136,63 @@ pub fn execute() {
     if had_error {
         process::exit(1);
     }
+}
+
+/// Reads the persisted runtime PID for a server, if present.
+fn read_runtime_pid(server: &str) -> Option<u32> {
+    let berth_home = paths::berth_home()?;
+    let state_path = berth_home.join("runtime").join(format!("{server}.toml"));
+    if !state_path.exists() {
+        return None;
+    }
+    let content = fs::read_to_string(state_path).ok()?;
+    let state: RuntimeStateSnapshot = toml::from_str(&content).ok()?;
+    state.pid
+}
+
+/// Returns current resident memory (KiB) for a process id, if available.
+#[cfg(unix)]
+fn resident_memory_kib(pid: u32) -> Option<u64> {
+    let output = Command::new("ps")
+        .args(["-o", "rss=", "-p", &pid.to_string()])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout).trim().parse().ok()
+}
+
+/// Returns current resident memory (KiB) for a process id, if available.
+#[cfg(windows)]
+fn resident_memory_kib(pid: u32) -> Option<u64> {
+    let filter = format!("PID eq {pid}");
+    let output = Command::new("tasklist")
+        .args(["/FI", &filter, "/FO", "CSV", "/NH"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let line = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .next()
+        .map(str::trim)?;
+    if line.starts_with("INFO:") {
+        return None;
+    }
+
+    let cols: Vec<&str> = line.trim_matches('"').split("\",\"").collect();
+    if cols.len() < 5 {
+        return None;
+    }
+    let digits: String = cols[4].chars().filter(|c| c.is_ascii_digit()).collect();
+    digits.parse().ok()
+}
+
+/// Returns current resident memory (KiB) for a process id, if available.
+#[cfg(not(any(unix, windows)))]
+fn resident_memory_kib(_pid: u32) -> Option<u64> {
+    None
 }

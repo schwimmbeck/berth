@@ -53,7 +53,7 @@ berth list
 | Install / uninstall / update MCP servers | Working | Install, remove, and update from the registry |
 | Configure MCP servers | Working | Set and view server configuration |
 | Start / stop / restart MCP servers | Working | Subprocess lifecycle controls with PID/state tracking |
-| MCP server health & status | Working | Runtime status from persisted state + process liveness checks |
+| MCP server health & status | Working | Runtime status with running/stopped/error plus PID and memory where available |
 | MCP server log streaming | Working | Tail lifecycle events from persisted server logs |
 | MCP proxy mode | Working | Transparent stdio proxy execution for configured servers |
 | MCP permission management | Working | Inspect declared/effective permissions, enforce env overrides at launch/link time, and block launch when network is fully revoked |
@@ -77,7 +77,7 @@ berth config import <file>     Import server config values from TOML bundle
 berth start [server]           Start MCP server(s)
 berth stop [server]            Stop MCP server(s)
 berth restart <server>         Restart an MCP server
-berth status                   Show MCP server status
+berth status                   Show MCP server status (state, PID, memory)
 berth logs <server>            Show recent MCP server logs
 
 berth permissions <server>     Show/manage/export MCP server permissions (--grant/--revoke/--reset/--export)

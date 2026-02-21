@@ -580,6 +580,39 @@ fn start_then_status_shows_running() {
 }
 
 #[test]
+fn status_shows_pid_for_running_server() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "token=abc123"])
+        .output()
+        .unwrap();
+    patch_runtime_to_long_running(tmp.path(), "github");
+    berth_with_home(tmp.path())
+        .args(["start", "github"])
+        .output()
+        .unwrap();
+
+    let state_path = tmp.path().join(".berth/runtime/github.toml");
+    let state_content = std::fs::read_to_string(state_path).unwrap();
+    let state: toml::Value = toml::from_str(&state_content).unwrap();
+    let pid = state["pid"].as_integer().unwrap().to_string();
+
+    let status = berth_with_home(tmp.path())
+        .args(["status"])
+        .output()
+        .unwrap();
+    assert!(status.status.success());
+    let stdout = String::from_utf8_lossy(&status.stdout);
+    assert!(stdout.contains("PID"));
+    assert!(stdout.contains("MEMORY"));
+    assert!(stdout.contains(&pid));
+}
+
+#[test]
 fn stop_after_start_shows_stopped() {
     let tmp = tempfile::tempdir().unwrap();
     berth_with_home(tmp.path())
@@ -609,6 +642,26 @@ fn stop_after_start_shows_stopped() {
     assert!(status.status.success());
     let stdout = String::from_utf8_lossy(&status.stdout);
     assert!(stdout.contains("stopped"));
+}
+
+#[test]
+fn status_malformed_runtime_state_exits_1() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+    let runtime_dir = tmp.path().join(".berth/runtime");
+    std::fs::create_dir_all(&runtime_dir).unwrap();
+    std::fs::write(runtime_dir.join("github.toml"), "not = [valid").unwrap();
+
+    let status = berth_with_home(tmp.path())
+        .args(["status"])
+        .output()
+        .unwrap();
+    assert!(!status.status.success());
+    let stdout = String::from_utf8_lossy(&status.stdout);
+    assert!(stdout.contains("error"));
 }
 
 #[test]

@@ -1369,6 +1369,40 @@ fn audit_action_filter_returns_only_matching_action() {
     assert!(stdout.contains("ago"));
 }
 
+#[test]
+fn audit_json_output_is_machine_readable() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "token=abc123"])
+        .output()
+        .unwrap();
+    patch_runtime_to_long_running(tmp.path(), "github");
+    berth_with_home(tmp.path())
+        .args(["start", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["stop", "github"])
+        .output()
+        .unwrap();
+
+    let output = berth_with_home(tmp.path())
+        .args(["audit", "github", "--json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let arr = json.as_array().unwrap();
+    assert!(!arr.is_empty());
+    assert!(arr.iter().any(|ev| ev["action"].as_str() == Some("start")));
+    assert!(arr.iter().any(|ev| ev["action"].as_str() == Some("stop")));
+}
+
 // --- proxy ---
 
 #[test]

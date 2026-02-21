@@ -142,6 +142,10 @@ pub enum Commands {
         /// Filter to a specific action (e.g. start, stop, proxy-start)
         #[arg(long)]
         action: Option<String>,
+
+        /// Print matching audit entries as JSON
+        #[arg(long)]
+        json: bool,
     },
 
     /// Link Berth to an AI client (e.g. claude-desktop, cursor)
@@ -200,7 +204,8 @@ pub fn execute(command: Commands) {
             server,
             since,
             action,
-        } => audit::execute(server.as_deref(), since.as_deref(), action.as_deref()),
+            json,
+        } => audit::execute(server.as_deref(), since.as_deref(), action.as_deref(), json),
         Commands::Link { client } => link::execute(&client),
         Commands::Unlink { client } => unlink::execute(&client),
         Commands::Proxy { server } => proxy::execute(&server),

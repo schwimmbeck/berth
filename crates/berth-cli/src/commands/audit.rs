@@ -1,24 +1,29 @@
 //! Command handler for `berth audit`.
 
 use colored::Colorize;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::paths;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AuditEvent {
     timestamp_epoch_secs: u64,
     server: String,
     action: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pid: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    args: Option<Vec<String>>,
 }
 
 /// Executes the `berth audit` command.
-pub fn execute(server: Option<&str>, since: Option<&str>, action: Option<&str>) {
+pub fn execute(server: Option<&str>, since: Option<&str>, action: Option<&str>, json: bool) {
     let since_secs = match since {
         Some(raw) => match parse_since(raw) {
             Ok(v) => Some(v),
@@ -86,7 +91,23 @@ pub fn execute(server: Option<&str>, since: Option<&str>, action: Option<&str>) 
     }
 
     if events.is_empty() {
+        if json {
+            println!("[]");
+            return;
+        }
         println!("{} No matching audit entries.", "!".yellow().bold());
+        return;
+    }
+
+    if json {
+        let rendered = match serde_json::to_string_pretty(&events) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("{} Failed to serialize audit JSON: {}", "✗".red().bold(), e);
+                process::exit(1);
+            }
+        };
+        println!("{rendered}");
         return;
     }
 

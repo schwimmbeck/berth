@@ -597,6 +597,115 @@ fn link_unknown_client_exits_1() {
     assert!(!output.status.success());
 }
 
+// --- permissions & audit ---
+
+#[test]
+fn permissions_show_declared_permissions() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+
+    let output = berth_with_home(tmp.path())
+        .args(["permissions", "github"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("network:api.github.com:443"));
+    assert!(stdout.contains("env:GITHUB_TOKEN"));
+}
+
+#[test]
+fn permissions_grant_and_revoke_persist_overrides() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+
+    let grant = berth_with_home(tmp.path())
+        .args([
+            "permissions",
+            "github",
+            "--grant",
+            "network:example.com:443",
+        ])
+        .output()
+        .unwrap();
+    assert!(grant.status.success());
+
+    let show_after_grant = berth_with_home(tmp.path())
+        .args(["permissions", "github"])
+        .output()
+        .unwrap();
+    let stdout_grant = String::from_utf8_lossy(&show_after_grant.stdout);
+    assert!(stdout_grant.contains("grant:"));
+    assert!(stdout_grant.contains("network:example.com:443"));
+
+    let revoke = berth_with_home(tmp.path())
+        .args([
+            "permissions",
+            "github",
+            "--revoke",
+            "network:example.com:443",
+        ])
+        .output()
+        .unwrap();
+    assert!(revoke.status.success());
+
+    let show_after_revoke = berth_with_home(tmp.path())
+        .args(["permissions", "github"])
+        .output()
+        .unwrap();
+    let stdout_revoke = String::from_utf8_lossy(&show_after_revoke.stdout);
+    assert!(stdout_revoke.contains("revoke:"));
+    assert!(stdout_revoke.contains("network:example.com:443"));
+}
+
+#[test]
+fn audit_shows_runtime_events_for_server() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "token=abc123"])
+        .output()
+        .unwrap();
+    patch_runtime_to_long_running(tmp.path(), "github");
+    berth_with_home(tmp.path())
+        .args(["start", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["stop", "github"])
+        .output()
+        .unwrap();
+
+    let output = berth_with_home(tmp.path())
+        .args(["audit", "github"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("start"));
+    assert!(stdout.contains("stop"));
+    assert!(stdout.contains("github"));
+}
+
+#[test]
+fn audit_invalid_since_exits_1() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = berth_with_home(tmp.path())
+        .args(["audit", "--since", "bad"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+}
+
 // --- update ---
 
 #[test]

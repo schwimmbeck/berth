@@ -55,8 +55,8 @@ berth list
 | Start / stop / restart MCP servers | Working | Subprocess lifecycle controls with PID/state tracking |
 | MCP server health & status | Working | Runtime status from persisted state + process liveness checks |
 | MCP server log streaming | Working | Tail lifecycle events from persisted server logs |
-| MCP permission management | Planned | Declare and enforce server permissions |
-| MCP audit trail | Planned | Log every tool call with full context |
+| MCP permission management | Working | Inspect declared permissions and manage local grant/revoke overrides |
+| MCP audit trail | Working | JSONL audit events for lifecycle actions with server/time filters |
 | AI client integration | Working | Auto-configure Claude Desktop (Cursor/Windsurf planned) |
 
 ## Commands
@@ -77,8 +77,8 @@ berth restart <server>         Restart an MCP server
 berth status                   Show MCP server status
 berth logs <server>            Show recent MCP server logs
 
-berth permissions <server>     Manage MCP server permissions (planned)
-berth audit [server]           View MCP tool call audit log (planned)
+berth permissions <server>     Show/manage MCP server permission overrides
+berth audit [server]           View runtime audit log (supports --since)
 berth link claude-desktop      Link Berth-managed servers to Claude Desktop
 berth unlink claude-desktop    Remove Berth-managed servers from Claude Desktop
 berth link <client>            Link to other AI clients (planned)

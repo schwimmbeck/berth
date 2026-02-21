@@ -21,6 +21,16 @@ pub fn server_config_path(name: &str) -> Option<PathBuf> {
     berth_servers_dir().map(|d| d.join(format!("{name}.toml")))
 }
 
+/// Returns the permissions override file path for a server.
+pub fn permissions_override_path(name: &str) -> Option<PathBuf> {
+    berth_home().map(|h| h.join("permissions").join(format!("{name}.toml")))
+}
+
+/// Returns the audit JSONL log path.
+pub fn audit_log_path() -> Option<PathBuf> {
+    berth_home().map(|h| h.join("audit").join("audit.jsonl"))
+}
+
 /// Returns the Claude Desktop config path for the current platform.
 pub fn claude_desktop_config_path() -> Option<PathBuf> {
     if let Ok(home) = std::env::var("BERTH_HOME") {

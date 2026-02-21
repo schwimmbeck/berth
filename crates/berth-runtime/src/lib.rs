@@ -65,6 +65,20 @@ struct RuntimeState {
     args: Vec<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AuditEvent {
+    timestamp_epoch_secs: u64,
+    server: String,
+    action: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pid: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    args: Option<Vec<String>>,
+}
+
 impl Default for RuntimeState {
     fn default() -> Self {
         RuntimeState {
@@ -94,6 +108,10 @@ impl RuntimeManager {
         let mut state = self.read_state(server)?;
 
         if state.status == ServerStatus::Running {
+            let old_pid = state.pid;
+            let old_command = state.command.clone();
+            let old_args = state.args.clone();
+
             if let Some(pid) = state.pid {
                 if process_is_alive(pid) {
                     return Ok(ServerStatus::Running);
@@ -105,6 +123,18 @@ impl RuntimeManager {
             state.updated_at_epoch_secs = now_epoch_secs();
             self.write_state(server, &state)?;
             self.append_log(server, "EXIT")?;
+            self.append_audit_event(AuditEvent {
+                timestamp_epoch_secs: now_epoch_secs(),
+                server: server.to_string(),
+                action: "exit".to_string(),
+                pid: old_pid,
+                command: old_command,
+                args: if old_args.is_empty() {
+                    None
+                } else {
+                    Some(old_args)
+                },
+            })?;
         }
 
         Ok(ServerStatus::Stopped)
@@ -154,12 +184,27 @@ impl RuntimeManager {
         state.updated_at_epoch_secs = now_epoch_secs();
         self.write_state(server, &state)?;
         self.append_log(server, &format!("START pid={pid}"))?;
+        self.append_audit_event(AuditEvent {
+            timestamp_epoch_secs: now_epoch_secs(),
+            server: server.to_string(),
+            action: "start".to_string(),
+            pid: Some(pid),
+            command: Some(spec.command.clone()),
+            args: if spec.args.is_empty() {
+                None
+            } else {
+                Some(spec.args.clone())
+            },
+        })?;
         Ok(StartOutcome::Started)
     }
 
     /// Stops a running server subprocess and records runtime state.
     pub fn stop(&self, server: &str) -> io::Result<StopOutcome> {
         let mut state = self.read_state(server)?;
+        let old_pid = state.pid;
+        let old_command = state.command.clone();
+        let old_args = state.args.clone();
         let mut outcome = StopOutcome::AlreadyStopped;
 
         if let Some(pid) = state.pid {
@@ -176,6 +221,20 @@ impl RuntimeManager {
         state.updated_at_epoch_secs = now_epoch_secs();
         self.write_state(server, &state)?;
         self.append_log(server, "STOP")?;
+        if outcome == StopOutcome::Stopped {
+            self.append_audit_event(AuditEvent {
+                timestamp_epoch_secs: now_epoch_secs(),
+                server: server.to_string(),
+                action: "stop".to_string(),
+                pid: old_pid,
+                command: old_command,
+                args: if old_args.is_empty() {
+                    None
+                } else {
+                    Some(old_args)
+                },
+            })?;
+        }
         Ok(outcome)
     }
 
@@ -183,6 +242,19 @@ impl RuntimeManager {
     pub fn restart(&self, server: &str, spec: &ProcessSpec) -> io::Result<()> {
         let _ = self.stop(server)?;
         let _ = self.start(server, spec)?;
+        let state = self.read_state(server)?;
+        self.append_audit_event(AuditEvent {
+            timestamp_epoch_secs: now_epoch_secs(),
+            server: server.to_string(),
+            action: "restart".to_string(),
+            pid: state.pid,
+            command: state.command,
+            args: if state.args.is_empty() {
+                None
+            } else {
+                Some(state.args)
+            },
+        })?;
         Ok(())
     }
 
@@ -216,6 +288,11 @@ impl RuntimeManager {
         self.berth_home.join("logs")
     }
 
+    /// Audit log directory path.
+    fn audit_dir(&self) -> PathBuf {
+        self.berth_home.join("audit")
+    }
+
     /// Per-server state file path.
     fn state_path(&self, server: &str) -> PathBuf {
         self.runtime_dir().join(format!("{server}.toml"))
@@ -224,6 +301,11 @@ impl RuntimeManager {
     /// Per-server log file path.
     fn log_path(&self, server: &str) -> PathBuf {
         self.logs_dir().join(format!("{server}.log"))
+    }
+
+    /// JSONL audit log file path.
+    fn audit_log_path(&self) -> PathBuf {
+        self.audit_dir().join("audit.jsonl")
     }
 
     /// Reads persisted state, defaulting to stopped when missing.
@@ -258,6 +340,18 @@ impl RuntimeManager {
             .create(true)
             .append(true)
             .open(self.log_path(server))
+    }
+
+    /// Appends one audit event as JSONL.
+    fn append_audit_event(&self, event: AuditEvent) -> io::Result<()> {
+        fs::create_dir_all(self.audit_dir())?;
+        let json = serde_json::to_string(&event)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.audit_log_path())?;
+        writeln!(file, "{json}")
     }
 }
 
@@ -452,6 +546,20 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert!(lines.iter().any(|l| l.contains("STOP")));
         assert!(lines.iter().any(|l| l.contains("START")));
+    }
+
+    #[test]
+    fn start_stop_writes_audit_events() {
+        let (_tmp, manager) = manager();
+        let spec = long_running_spec();
+        manager.start("github", &spec).unwrap();
+        manager.stop("github").unwrap();
+
+        let audit_path = manager.audit_log_path();
+        let content = fs::read_to_string(audit_path).unwrap();
+        let lines: Vec<&str> = content.lines().collect();
+        assert!(lines.iter().any(|l| l.contains("\"action\":\"start\"")));
+        assert!(lines.iter().any(|l| l.contains("\"action\":\"stop\"")));
     }
 
     #[test]

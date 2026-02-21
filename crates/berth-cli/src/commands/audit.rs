@@ -1,20 +1,154 @@
 //! Command handler for `berth audit`.
 
 use colored::Colorize;
+use serde::Deserialize;
+use std::fs;
+use std::process;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use crate::paths;
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AuditEvent {
+    timestamp_epoch_secs: u64,
+    server: String,
+    action: String,
+    pid: Option<u32>,
+}
 
 /// Executes the `berth audit` command.
 pub fn execute(server: Option<&str>, since: Option<&str>) {
+    let since_secs = match since {
+        Some(raw) => match parse_since(raw) {
+            Ok(v) => Some(v),
+            Err(msg) => {
+                eprintln!("{} {}", "✗".red().bold(), msg);
+                process::exit(1);
+            }
+        },
+        None => None,
+    };
+
+    let path = match paths::audit_log_path() {
+        Some(p) => p,
+        None => {
+            eprintln!("{} Could not determine home directory.", "✗".red().bold());
+            process::exit(1);
+        }
+    };
+
+    if !path.exists() {
+        println!("{} No audit entries yet.", "!".yellow().bold());
+        return;
+    }
+
+    let content = match fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!(
+                "{} Failed to read audit log {}: {}",
+                "✗".red().bold(),
+                path.display(),
+                e
+            );
+            process::exit(1);
+        }
+    };
+
+    let now = now_epoch_secs();
+    let cutoff = since_secs.map(|s| now.saturating_sub(s));
+    let mut events = Vec::new();
+    let mut skipped = 0usize;
+
+    for line in content.lines().filter(|l| !l.trim().is_empty()) {
+        match serde_json::from_str::<AuditEvent>(line) {
+            Ok(ev) => {
+                if let Some(name) = server {
+                    if ev.server != name {
+                        continue;
+                    }
+                }
+                if let Some(c) = cutoff {
+                    if ev.timestamp_epoch_secs < c {
+                        continue;
+                    }
+                }
+                events.push(ev);
+            }
+            Err(_) => skipped += 1,
+        }
+    }
+
+    if events.is_empty() {
+        println!("{} No matching audit entries.", "!".yellow().bold());
+        return;
+    }
+
     println!(
-        "{} {} is not yet implemented.",
-        "!".yellow().bold(),
-        "berth audit".bold()
+        "{} Audit entries{}:\n",
+        "✓".green().bold(),
+        server
+            .map(|s| format!(" for {}", s.cyan()))
+            .unwrap_or_default()
     );
-    if let Some(name) = server {
-        println!("  Would show audit log for server: {}", name.cyan());
-    } else {
-        println!("  Would show audit log for all servers.");
+
+    println!(
+        "  {:<12} {:<20} {:<8} {}",
+        "ACTION".bold(),
+        "SERVER".bold(),
+        "PID".bold(),
+        "TIME".bold()
+    );
+    println!("  {}", "─".repeat(62));
+    for ev in &events {
+        let pid = ev
+            .pid
+            .map(|p| p.to_string())
+            .unwrap_or_else(|| "-".to_string());
+        println!(
+            "  {:<12} {:<20} {:<8} {}",
+            ev.action.as_str(),
+            ev.server.cyan(),
+            pid,
+            ev.timestamp_epoch_secs
+        );
     }
-    if let Some(duration) = since {
-        println!("  Since: {}", duration);
+
+    if skipped > 0 {
+        println!(
+            "\n{} Skipped {} malformed audit line(s).",
+            "!".yellow().bold(),
+            skipped
+        );
     }
+}
+
+/// Parses `--since` strings like `30s`, `5m`, `1h`, `7d`.
+fn parse_since(raw: &str) -> Result<u64, String> {
+    if raw.len() < 2 {
+        return Err("Invalid --since format. Use <number><s|m|h|d>.".to_string());
+    }
+    let (num, unit) = raw.split_at(raw.len() - 1);
+    let n: u64 = num
+        .parse()
+        .map_err(|_| "Invalid --since number. Use <number><s|m|h|d>.".to_string())?;
+    let mult = match unit {
+        "s" => 1,
+        "m" => 60,
+        "h" => 3_600,
+        "d" => 86_400,
+        _ => {
+            return Err("Invalid --since unit. Use s, m, h, or d.".to_string());
+        }
+    };
+    Ok(n.saturating_mul(mult))
+}
+
+/// Returns current unix timestamp in seconds.
+fn now_epoch_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }

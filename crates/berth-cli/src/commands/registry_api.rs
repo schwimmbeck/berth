@@ -448,6 +448,17 @@ fn route_request(request: &HttpRequest, registry: &Registry, state: &ApiState) -
             }
             route_server_filters(registry)
         }
+        "/servers/trending" => {
+            if method != "GET" {
+                return (
+                    405,
+                    json!({
+                        "error": "method not allowed"
+                    }),
+                );
+            }
+            route_servers_trending(query, registry, state)
+        }
         "/publishers/verified" => {
             if method != "GET" {
                 return (
@@ -648,6 +659,88 @@ fn route_server_filters(registry: &Registry) -> (u16, Value) {
             "categories": categories.into_iter().collect::<Vec<_>>(),
             "platforms": platforms.into_iter().collect::<Vec<_>>(),
             "trustLevels": trust_levels.into_iter().collect::<Vec<_>>()
+        }),
+    )
+}
+
+fn route_servers_trending(
+    query: Option<&str>,
+    registry: &Registry,
+    state: &ApiState,
+) -> (u16, Value) {
+    let category_filter = query_param(query, "category").filter(|v| !v.trim().is_empty());
+    let platform_filter = query_param(query, "platform").filter(|v| !v.trim().is_empty());
+    let trust_filter = query_param(query, "trustLevel")
+        .or_else(|| query_param(query, "trust_level"))
+        .filter(|v| !v.trim().is_empty());
+    let offset = parse_usize_param(query, "offset").unwrap_or(0);
+    let limit = parse_usize_param(query, "limit").unwrap_or(10).min(100);
+
+    let verified_publishers = state.list_verified_publishers().unwrap_or_default();
+    let mut entries = registry
+        .list_all()
+        .iter()
+        .filter(|server| {
+            matches_server_filters(server, category_filter, platform_filter, trust_filter)
+        })
+        .map(|server| {
+            let (stars, reports) = state.community_counts(&server.name).unwrap_or((0, 0));
+            let maintainer_verified =
+                is_maintainer_verified(&server.maintainer, &verified_publishers);
+            let quality_score = server_quality_score(server, maintainer_verified, stars, reports);
+            let trend_score =
+                server_trending_score(server, quality_score, stars, reports, maintainer_verified);
+            (
+                server,
+                maintainer_verified,
+                stars,
+                reports,
+                quality_score,
+                trend_score,
+            )
+        })
+        .collect::<Vec<_>>();
+    entries.sort_by(|left, right| {
+        right
+            .5
+            .cmp(&left.5)
+            .then_with(|| left.0.name.cmp(&right.0.name))
+    });
+    let total = entries.len();
+    let servers = entries
+        .into_iter()
+        .skip(offset)
+        .take(limit)
+        .map(
+            |(server, maintainer_verified, stars, reports, quality_score, trend_score)| {
+                let mut summary = server_summary(server, maintainer_verified, quality_score);
+                if let Some(obj) = summary.as_object_mut() {
+                    obj.insert("stars".to_string(), json!(stars));
+                    obj.insert("reports".to_string(), json!(reports));
+                    obj.insert("trendScore".to_string(), json!(trend_score));
+                }
+                summary
+            },
+        )
+        .collect::<Vec<_>>();
+    let count = servers.len();
+    (
+        200,
+        json!({
+            "filters": {
+                "category": category_filter,
+                "platform": platform_filter,
+                "trustLevel": trust_filter
+            },
+            "sort": {
+                "by": "trendScore",
+                "order": "desc"
+            },
+            "total": total,
+            "count": count,
+            "offset": offset,
+            "limit": limit,
+            "servers": servers
         }),
     )
 }
@@ -1301,6 +1394,24 @@ fn server_quality_score(
     score.clamp(0, 100) as u32
 }
 
+/// Produces a deterministic trending score for homepage catalog ranking.
+fn server_trending_score(
+    server: &ServerMetadata,
+    quality_score: u32,
+    stars: u64,
+    reports: u64,
+    maintainer_verified: bool,
+) -> u32 {
+    let mut score: i64 = (quality_score as i64) * 2;
+    score += (server.quality.downloads.min(50_000) / 500) as i64;
+    score += (stars.min(50) * 6) as i64;
+    score -= (reports.min(50) * 8) as i64;
+    if maintainer_verified {
+        score += 20;
+    }
+    score.clamp(0, 1000) as u32
+}
+
 /// Builds a compact API summary view for one registry server.
 fn server_summary(
     server: &berth_registry::types::ServerMetadata,
@@ -1501,6 +1612,31 @@ mod tests {
         assert!(platforms.iter().any(|v| v.as_str() == Some("macos")));
         let trust_levels = body["trustLevels"].as_array().unwrap();
         assert!(trust_levels.iter().any(|v| v.as_str() == Some("official")));
+    }
+
+    #[test]
+    fn route_request_supports_trending_endpoint() {
+        let registry = Registry::from_seed();
+        let state = test_state();
+        let _ = route_request(&req("POST", "/servers/github/star"), &registry, &state);
+        let _ = route_request(&req("POST", "/servers/github/star"), &registry, &state);
+
+        let (status, body) = route_request(
+            &req("GET", "/servers/trending?limit=5&platform=macos"),
+            &registry,
+            &state,
+        );
+        assert_eq!(status, 200);
+        assert_eq!(body["sort"]["by"].as_str(), Some("trendScore"));
+        assert_eq!(body["sort"]["order"].as_str(), Some("desc"));
+        assert!(body["count"].as_u64().unwrap_or(0) >= 1);
+        let servers = body["servers"].as_array().unwrap();
+        assert!(servers.iter().all(|s| s["trendScore"].as_u64().is_some()));
+        let github = servers
+            .iter()
+            .find(|s| s["name"].as_str() == Some("github"))
+            .unwrap();
+        assert!(github["stars"].as_u64().unwrap_or(0) >= 2);
     }
 
     #[test]

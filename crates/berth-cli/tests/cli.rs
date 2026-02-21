@@ -546,7 +546,7 @@ fn registry_api_serves_health_search_and_downloads() {
             "--bind",
             "127.0.0.1:0",
             "--max-requests",
-            "13",
+            "14",
         ])
         .stdout(Stdio::piped())
         .spawn()
@@ -644,6 +644,19 @@ fn registry_api_serves_health_search_and_downloads() {
     let community: serde_json::Value = serde_json::from_str(&community_body).unwrap();
     assert!(community["stars"].as_u64().unwrap_or(0) >= 1);
     assert!(community["reports"].as_u64().unwrap_or(0) >= 1);
+
+    let (trending_status, trending_body) = http_get(&addr, "/servers/trending?limit=5");
+    assert_eq!(trending_status, 200);
+    let trending: serde_json::Value = serde_json::from_str(&trending_body).unwrap();
+    assert_eq!(trending["sort"]["by"].as_str(), Some("trendScore"));
+    assert_eq!(trending["sort"]["order"].as_str(), Some("desc"));
+    let trending_servers = trending["servers"].as_array().unwrap();
+    assert!(!trending_servers.is_empty());
+    let trending_github = trending_servers
+        .iter()
+        .find(|server| server["name"].as_str() == Some("github"))
+        .unwrap();
+    assert!(trending_github["trendScore"].as_u64().unwrap_or(0) > 0);
 
     let (verify_status, verify_body) = http_post_json(
         &addr,

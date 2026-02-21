@@ -107,6 +107,7 @@ Registry API endpoints:
 - `GET /health`
 - `GET /servers?q=<query>&category=<category>&platform=<platform>&trustLevel=<level>&offset=<n>&limit=<n>&sortBy=<field>&order=<asc|desc>`
 - `GET /servers/filters`
+- `GET /servers/trending?limit=<n>&category=<category>&platform=<platform>&trustLevel=<level>`
 - `GET /servers/<name>`
 - `GET /servers/<name>/downloads`
 - `GET /servers/<name>/community`

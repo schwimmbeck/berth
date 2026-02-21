@@ -51,6 +51,7 @@ Registry API endpoints:
 - `GET /health`
 - `GET /servers` with optional `q|query`, `category`, `platform`, `trustLevel`, `offset`, `limit`, `sortBy`, `order`
 - `GET /servers/filters`
+- `GET /servers/trending` with optional `limit`, `offset`, `category`, `platform`, `trustLevel`
 - `GET /servers/<name>`
 - `GET /servers/<name>/downloads`
 - `GET /servers/<name>/community`

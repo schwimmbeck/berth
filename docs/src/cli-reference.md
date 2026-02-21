@@ -66,7 +66,7 @@ Registry API endpoints:
 - `POST /publishers/verify`
 - `POST /publishers/unverify`
 - `GET /site` (HTML registry catalog with filters and sorting)
-- `GET /site/servers/<name>` (HTML server detail page with install copy button)
+- `GET /site/servers/<name>` (HTML server detail page with install copy button and star/report controls)
 - `OPTIONS <endpoint>` for browser preflight (CORS)
 
 `GET /servers` and `GET /servers/<name>` responses include:

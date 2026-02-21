@@ -613,6 +613,8 @@ fn registry_api_serves_health_search_and_downloads() {
     assert!(site_detail_body.contains("Install Command"));
     assert!(site_detail_body.contains("berth install github"));
     assert!(site_detail_body.contains("Permissions"));
+    assert!(site_detail_body.contains("Star this server"));
+    assert!(site_detail_body.contains("Recent Reports"));
 
     let (search_status, search_body) = http_get(&addr, "/servers?q=github");
     assert_eq!(search_status, 200);

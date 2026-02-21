@@ -72,7 +72,7 @@ berth list
 | Registry API (local) | Working | Serve REST endpoints for health, search, server detail, and download counts from the current registry dataset |
 | Registry website (local) | Working | Browser UI at `/site` with catalog filters, server detail pages, and copy-ready install commands |
 | Registry publish workflow | Working | Validate `berth.toml`, run local quality checks, and enqueue submission artifacts for manual review |
-| Community signals (local API) | Working | Submit stars/reports and manage verified publisher badges with persisted local counters |
+| Community signals | Working | Submit stars/reports via API and website detail UI; manage verified publisher badges with persisted local counters |
 
 ## Commands
 

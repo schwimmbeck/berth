@@ -713,6 +713,12 @@ fn render_site_detail_page(
     let install_command = format!("berth install {}", server.name);
     let readme_url = readme_url_for_repository(&server.source.repository);
     let permissions = permissions_summary(server);
+    let recent_reports = state
+        .list_reports(&server.name)
+        .unwrap_or_default()
+        .into_iter()
+        .take(5)
+        .collect::<Vec<_>>();
     let related = route_server_related(server, Some("limit=4"), registry, state);
     let related_servers = if related.0 == 200 {
         related.1["servers"].as_array().cloned().unwrap_or_default()
@@ -805,6 +811,50 @@ fn render_site_detail_page(
     ));
     content.push_str("</p>");
     content.push_str("</div>");
+    content.push_str("</section>");
+
+    let escaped_server_name = html_escape(&server.name);
+    content.push_str("<section class=\"panel\">");
+    content.push_str("<h2>Community</h2>");
+    content.push_str(&format!(
+        "<p class=\"meta\" data-community-counts data-stars=\"{stars}\" data-reports=\"{reports}\"><span id=\"community-stars\">stars {stars}</span><span id=\"community-reports\">reports {reports}</span></p>"
+    ));
+    content.push_str("<div class=\"community-actions\">");
+    content.push_str(&format!(
+        "<button type=\"button\" class=\"star-btn\" data-star-server=\"{escaped_server_name}\">Star this server</button>"
+    ));
+    content.push_str("</div>");
+    content.push_str(&format!(
+        "<form class=\"report-form\" data-report-server=\"{escaped_server_name}\">"
+    ));
+    content.push_str(
+        "<label>Report reason<input type=\"text\" name=\"reason\" placeholder=\"spam\"></label>",
+    );
+    content.push_str("<label>Details<textarea name=\"details\" rows=\"3\" placeholder=\"Describe the issue\"></textarea></label>");
+    content.push_str("<button type=\"submit\">Submit report</button>");
+    content.push_str("</form>");
+    content.push_str("<p class=\"meta\" data-report-status></p>");
+    content.push_str("<h3>Recent Reports</h3>");
+    if recent_reports.is_empty() {
+        content.push_str("<p class=\"meta\">No reports submitted.</p>");
+    } else {
+        content.push_str("<ul class=\"report-list\">");
+        for event in recent_reports {
+            let reason = html_escape(&event.reason);
+            let details = if event.details.trim().is_empty() {
+                "No details provided.".to_string()
+            } else {
+                html_escape(&event.details)
+            };
+            content.push_str("<li>");
+            content.push_str(&format!(
+                "<span class=\"meta\">reason {reason} · epoch {}</span><p>{details}</p>",
+                event.timestamp_epoch_secs
+            ));
+            content.push_str("</li>");
+        }
+        content.push_str("</ul>");
+    }
     content.push_str("</section>");
 
     if !related_servers.is_empty() {
@@ -987,6 +1037,35 @@ code {
 .copy-btn.copied {
   background: #0f8f50;
 }
+.community-actions {
+  margin-top: 0.35rem;
+}
+.star-btn {
+  background: #0b7541;
+}
+.star-btn.starred {
+  background: #09975a;
+}
+.report-form {
+  margin-top: 0.7rem;
+  display: grid;
+  gap: 0.6rem;
+  grid-template-columns: 1fr;
+}
+textarea {
+  font: inherit;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  padding: 0.5rem 0.6rem;
+  resize: vertical;
+}
+.report-list {
+  margin: 0.6rem 0 0;
+  padding-left: 1rem;
+}
+.report-list li {
+  margin: 0.6rem 0;
+}
 .detail-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
@@ -1027,6 +1106,75 @@ for (const button of document.querySelectorAll(".copy-btn")) {
       }, 1100);
     } catch (_) {
       button.textContent = "Copy failed";
+    }
+  });
+}
+
+function applyCommunityCounts(payload) {
+  const starsText = document.getElementById("community-stars");
+  const reportsText = document.getElementById("community-reports");
+  if (starsText && typeof payload.stars === "number") {
+    starsText.textContent = `stars ${payload.stars}`;
+  }
+  if (reportsText && typeof payload.reports === "number") {
+    reportsText.textContent = `reports ${payload.reports}`;
+  }
+}
+
+const starButton = document.querySelector("[data-star-server]");
+if (starButton) {
+  starButton.addEventListener("click", async () => {
+    const server = starButton.getAttribute("data-star-server");
+    if (!server) return;
+    try {
+      const response = await fetch(`/servers/${encodeURIComponent(server)}/star`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}"
+      });
+      if (!response.ok) throw new Error();
+      const payload = await response.json();
+      applyCommunityCounts({ stars: payload.stars });
+      starButton.textContent = "Star recorded";
+      starButton.classList.add("starred");
+      setTimeout(() => {
+        starButton.textContent = "Star this server";
+        starButton.classList.remove("starred");
+      }, 1200);
+    } catch (_) {
+      starButton.textContent = "Star failed";
+    }
+  });
+}
+
+const reportForm = document.querySelector("form[data-report-server]");
+if (reportForm) {
+  const reportStatus = document.querySelector("[data-report-status]");
+  reportForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const server = reportForm.getAttribute("data-report-server");
+    if (!server) return;
+    const reasonField = reportForm.querySelector("[name='reason']");
+    const detailsField = reportForm.querySelector("[name='details']");
+    const reason = reasonField ? reasonField.value : "";
+    const details = detailsField ? detailsField.value : "";
+    try {
+      const response = await fetch(`/servers/${encodeURIComponent(server)}/report`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason, details })
+      });
+      if (!response.ok) throw new Error();
+      const payload = await response.json();
+      applyCommunityCounts({ reports: payload.reports });
+      if (reportStatus) {
+        reportStatus.textContent = "Report submitted";
+      }
+      reportForm.reset();
+    } catch (_) {
+      if (reportStatus) {
+        reportStatus.textContent = "Report failed";
+      }
     }
   });
 }
@@ -2901,6 +3049,8 @@ mod tests {
         assert!(detail.contains("GitHub MCP Server"));
         assert!(detail.contains("berth install github"));
         assert!(detail.contains("Permissions"));
+        assert!(detail.contains("Star this server"));
+        assert!(detail.contains("Recent Reports"));
     }
 
     #[test]

@@ -915,6 +915,38 @@ fn permissions_export_outputs_json() {
 }
 
 #[test]
+fn permissions_rejects_invalid_format() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+
+    let output = berth_with_home(tmp.path())
+        .args(["permissions", "github", "--grant", "network:api.github.com"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Invalid permission format"));
+}
+
+#[test]
+fn permissions_accepts_valid_env_permission_override() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+
+    let output = berth_with_home(tmp.path())
+        .args(["permissions", "github", "--grant", "env:GITHUB_TOKEN"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+}
+
+#[test]
 fn audit_shows_runtime_events_for_server() {
     let tmp = tempfile::tempdir().unwrap();
     berth_with_home(tmp.path())

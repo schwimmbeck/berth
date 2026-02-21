@@ -57,6 +57,19 @@ pub fn clear_permission_overrides(server: &str) -> Result<(), String> {
     fs::remove_file(path).map_err(|e| format!("Failed to clear overrides: {e}"))
 }
 
+/// Validates one user-supplied permission string.
+pub fn validate_permission_syntax(permission: &str) -> Result<(), String> {
+    if let Some(value) = permission.strip_prefix("env:") {
+        return validate_env_permission(value, permission);
+    }
+    if let Some(value) = permission.strip_prefix("network:") {
+        return validate_network_permission(value, permission);
+    }
+    Err(format!(
+        "Invalid permission format `{permission}`. Use `env:<VAR>`, `env:*`, `network:<host>:<port>`, or `network:*`."
+    ))
+}
+
 /// Computes effective permissions of one prefix (`env` or `network`).
 pub fn effective_permissions(
     prefix: &str,
@@ -128,6 +141,67 @@ pub fn validate_network_permissions(
     Ok(())
 }
 
+fn validate_env_permission(value: &str, original: &str) -> Result<(), String> {
+    if value == "*" {
+        return Ok(());
+    }
+    if value.is_empty() {
+        return Err(format!(
+            "Invalid permission format `{original}`. Environment variable name is required."
+        ));
+    }
+    let mut chars = value.chars();
+    let first = chars.next().unwrap_or_default();
+    if !(first.is_ascii_uppercase() || first == '_') {
+        return Err(format!(
+            "Invalid permission format `{original}`. Env vars must match `[A-Z_][A-Z0-9_]*`."
+        ));
+    }
+    if !chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_') {
+        return Err(format!(
+            "Invalid permission format `{original}`. Env vars must match `[A-Z_][A-Z0-9_]*`."
+        ));
+    }
+    Ok(())
+}
+
+fn validate_network_permission(value: &str, original: &str) -> Result<(), String> {
+    if value == "*" {
+        return Ok(());
+    }
+    let (host, port) = value.split_once(':').ok_or_else(|| {
+        format!(
+            "Invalid permission format `{original}`. Network permissions must be `network:<host>:<port>`."
+        )
+    })?;
+    if host.is_empty() {
+        return Err(format!(
+            "Invalid permission format `{original}`. Host is required."
+        ));
+    }
+    if host != "*"
+        && !host
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+    {
+        return Err(format!(
+            "Invalid permission format `{original}`. Host may contain only letters, digits, `.`, or `-`."
+        ));
+    }
+    if port == "*" {
+        return Ok(());
+    }
+    let parsed_port: u16 = port.parse().map_err(|_| {
+        format!("Invalid permission format `{original}`. Port must be `*` or 1-65535.")
+    })?;
+    if parsed_port == 0 {
+        return Err(format!(
+            "Invalid permission format `{original}`. Port must be `*` or 1-65535."
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -178,5 +252,22 @@ mod tests {
         let overrides = PermissionOverrides::default();
         let declared = vec!["api.github.com:443".to_string()];
         assert!(validate_network_permissions("github", &declared, &overrides).is_ok());
+    }
+
+    #[test]
+    fn validate_permission_syntax_accepts_valid_formats() {
+        assert!(validate_permission_syntax("env:GITHUB_TOKEN").is_ok());
+        assert!(validate_permission_syntax("env:*").is_ok());
+        assert!(validate_permission_syntax("network:api.github.com:443").is_ok());
+        assert!(validate_permission_syntax("network:*:443").is_ok());
+        assert!(validate_permission_syntax("network:*").is_ok());
+    }
+
+    #[test]
+    fn validate_permission_syntax_rejects_invalid_formats() {
+        assert!(validate_permission_syntax("env:GITHUB-TOKEN").is_err());
+        assert!(validate_permission_syntax("network:api.github.com").is_err());
+        assert!(validate_permission_syntax("network:api.github.com:99999").is_err());
+        assert!(validate_permission_syntax("filesystem:/tmp").is_err());
     }
 }

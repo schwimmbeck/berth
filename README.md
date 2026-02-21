@@ -85,6 +85,12 @@ berth unlink <client>          Unlink Berth-managed servers from claude-desktop,
 berth proxy <server>           Run as transparent MCP proxy
 ```
 
+Permission override formats:
+- `env:<VAR>` (example: `env:GITHUB_TOKEN`)
+- `env:*`
+- `network:<host>:<port>` (examples: `network:api.github.com:443`, `network:*:443`)
+- `network:*`
+
 ## Supported MCP Servers (seed registry)
 
 Berth ships with a built-in registry of popular MCP servers:

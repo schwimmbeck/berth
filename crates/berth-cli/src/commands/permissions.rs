@@ -10,7 +10,7 @@ use std::process;
 use crate::paths;
 use crate::permission_filter::{
     clear_permission_overrides, effective_permissions, load_permission_overrides,
-    write_permission_overrides,
+    validate_permission_syntax, write_permission_overrides,
 };
 
 #[derive(Debug, Serialize)]
@@ -83,6 +83,10 @@ pub fn execute(
     };
 
     if let Some(perm) = grant {
+        if let Err(msg) = validate_permission_syntax(perm) {
+            eprintln!("{} {}", "✗".red().bold(), msg);
+            process::exit(1);
+        }
         let mut overrides = match load_permission_overrides(server) {
             Ok(o) => o,
             Err(msg) => {
@@ -106,6 +110,10 @@ pub fn execute(
     }
 
     if let Some(perm) = revoke {
+        if let Err(msg) = validate_permission_syntax(perm) {
+            eprintln!("{} {}", "✗".red().bold(), msg);
+            process::exit(1);
+        }
         let mut overrides = match load_permission_overrides(server) {
             Ok(o) => o,
             Err(msg) => {

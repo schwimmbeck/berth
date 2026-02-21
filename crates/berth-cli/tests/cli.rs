@@ -1127,6 +1127,39 @@ fn audit_invalid_since_exits_1() {
     assert!(!output.status.success());
 }
 
+#[test]
+fn audit_action_filter_returns_only_matching_action() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "token=abc123"])
+        .output()
+        .unwrap();
+    patch_runtime_to_long_running(tmp.path(), "github");
+    berth_with_home(tmp.path())
+        .args(["start", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["stop", "github"])
+        .output()
+        .unwrap();
+
+    let output = berth_with_home(tmp.path())
+        .args(["audit", "github", "--action", "start"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("action=start"));
+    assert!(stdout.contains("start"));
+    assert!(!stdout.contains("stop"));
+    assert!(stdout.contains("ago"));
+}
+
 // --- proxy ---
 
 #[test]

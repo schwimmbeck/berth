@@ -18,7 +18,7 @@ struct AuditEvent {
 }
 
 /// Executes the `berth audit` command.
-pub fn execute(server: Option<&str>, since: Option<&str>) {
+pub fn execute(server: Option<&str>, since: Option<&str>, action: Option<&str>) {
     let since_secs = match since {
         Some(raw) => match parse_since(raw) {
             Ok(v) => Some(v),
@@ -69,6 +69,11 @@ pub fn execute(server: Option<&str>, since: Option<&str>) {
                         continue;
                     }
                 }
+                if let Some(filter_action) = action {
+                    if ev.action != filter_action {
+                        continue;
+                    }
+                }
                 if let Some(c) = cutoff {
                     if ev.timestamp_epoch_secs < c {
                         continue;
@@ -86,32 +91,36 @@ pub fn execute(server: Option<&str>, since: Option<&str>) {
     }
 
     println!(
-        "{} Audit entries{}:\n",
+        "{} Audit entries{}{}:\n",
         "✓".green().bold(),
         server
             .map(|s| format!(" for {}", s.cyan()))
-            .unwrap_or_default()
+            .unwrap_or_default(),
+        action
+            .map(|a| format!(" (action={})", a.bold()))
+            .unwrap_or_default(),
     );
 
     println!(
-        "  {:<12} {:<20} {:<8} {}",
+        "  {:<24} {:<20} {:<22} {}",
         "ACTION".bold(),
         "SERVER".bold(),
-        "PID".bold(),
-        "TIME".bold()
+        "TIME".bold(),
+        "PID".bold()
     );
-    println!("  {}", "─".repeat(62));
+    println!("  {}", "─".repeat(80));
     for ev in &events {
         let pid = ev
             .pid
             .map(|p| p.to_string())
             .unwrap_or_else(|| "-".to_string());
+        let ts = format_timestamp(ev.timestamp_epoch_secs, now);
         println!(
-            "  {:<12} {:<20} {:<8} {}",
+            "  {:<24} {:<20} {:<22} {}",
             ev.action.as_str(),
             ev.server.cyan(),
-            pid,
-            ev.timestamp_epoch_secs
+            ts,
+            pid
         );
     }
 
@@ -151,4 +160,24 @@ fn now_epoch_secs() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+/// Formats epoch seconds with a relative-age suffix.
+fn format_timestamp(epoch_secs: u64, now_epoch_secs: u64) -> String {
+    let age = now_epoch_secs.saturating_sub(epoch_secs);
+    format!("{epoch_secs} ({})", format_age(age))
+}
+
+/// Formats age in compact form, e.g. `12s ago`, `5m ago`.
+fn format_age(seconds: u64) -> String {
+    if seconds < 60 {
+        return format!("{seconds}s ago");
+    }
+    if seconds < 3_600 {
+        return format!("{}m ago", seconds / 60);
+    }
+    if seconds < 86_400 {
+        return format!("{}h ago", seconds / 3_600);
+    }
+    format!("{}d ago", seconds / 86_400)
 }

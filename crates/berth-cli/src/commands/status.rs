@@ -175,10 +175,8 @@ fn resident_memory_kib(pid: u32) -> Option<u64> {
         return None;
     }
 
-    let line = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .next()
-        .map(str::trim)?;
+    let decoded = String::from_utf8_lossy(&output.stdout);
+    let line = decoded.lines().next().map(str::trim)?;
     if line.starts_with("INFO:") {
         return None;
     }

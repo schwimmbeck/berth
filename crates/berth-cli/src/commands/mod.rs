@@ -138,6 +138,10 @@ pub enum Commands {
         /// Show entries since duration (e.g. 1h, 24h)
         #[arg(long)]
         since: Option<String>,
+
+        /// Filter to a specific action (e.g. start, stop, proxy-start)
+        #[arg(long)]
+        action: Option<String>,
     },
 
     /// Link Berth to an AI client (e.g. claude-desktop, cursor)
@@ -192,7 +196,11 @@ pub fn execute(command: Commands) {
             reset,
             export_json,
         ),
-        Commands::Audit { server, since } => audit::execute(server.as_deref(), since.as_deref()),
+        Commands::Audit {
+            server,
+            since,
+            action,
+        } => audit::execute(server.as_deref(), since.as_deref(), action.as_deref()),
         Commands::Link { client } => link::execute(&client),
         Commands::Unlink { client } => unlink::execute(&client),
         Commands::Proxy { server } => proxy::execute(&server),

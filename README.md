@@ -50,7 +50,7 @@ berth list
 | MCP server search | Working | Search the registry by name, tag, or category |
 | MCP server info | Working | View metadata, permissions, config, compatibility |
 | List installed MCP servers | Working | See what's installed and its status |
-| Install / uninstall MCP servers | Working | One-command install from the registry |
+| Install / uninstall / update MCP servers | Working | Install, remove, and update from the registry |
 | Configure MCP servers | Working | Set and view server configuration |
 | Start / stop / restart MCP servers | Working | Subprocess lifecycle controls with PID/state tracking |
 | MCP server health & status | Working | Runtime status from persisted state + process liveness checks |
@@ -68,7 +68,7 @@ berth list                     List installed MCP servers
 
 berth install <server>         Install an MCP server
 berth uninstall <server>       Remove an MCP server
-berth update <server|--all>    Update MCP servers (planned)
+berth update <server|--all>    Update MCP servers
 berth config <server>          Configure an MCP server
 
 berth start [server]           Start MCP server(s)

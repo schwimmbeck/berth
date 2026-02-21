@@ -50,6 +50,22 @@ fn patch_runtime_to_long_running(tmp: &std::path::Path, server: &str) {
     std::fs::write(&config_path, rendered).unwrap();
 }
 
+fn patch_installed_version(tmp: &std::path::Path, server: &str, version: &str) {
+    let config_path = tmp.join(".berth/servers").join(format!("{server}.toml"));
+    let content = std::fs::read_to_string(&config_path).unwrap();
+    let mut value: toml::Value = toml::from_str(&content).unwrap();
+    value
+        .get_mut("server")
+        .and_then(toml::Value::as_table_mut)
+        .unwrap()
+        .insert(
+            "version".to_string(),
+            toml::Value::String(version.to_string()),
+        );
+    let rendered = toml::to_string_pretty(&value).unwrap();
+    std::fs::write(&config_path, rendered).unwrap();
+}
+
 // --- search ---
 
 #[test]
@@ -590,7 +606,36 @@ fn update_without_args_exits_1() {
 }
 
 #[test]
-fn update_shows_planned_message() {
+fn update_specific_server_updates_and_preserves_config() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "token=abc123"])
+        .output()
+        .unwrap();
+    patch_installed_version(tmp.path(), "github", "0.9.0");
+
+    let output = berth_with_home(tmp.path())
+        .args(["update", "github"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Updated"));
+    assert!(stdout.contains("0.9.0"));
+    assert!(stdout.contains("1.2.0"));
+
+    let updated = std::fs::read_to_string(tmp.path().join(".berth/servers/github.toml")).unwrap();
+    let parsed: toml::Value = toml::from_str(&updated).unwrap();
+    assert_eq!(parsed["server"]["version"].as_str(), Some("1.2.0"));
+    assert_eq!(parsed["config"]["token"].as_str(), Some("abc123"));
+}
+
+#[test]
+fn update_specific_server_up_to_date_succeeds() {
     let tmp = tempfile::tempdir().unwrap();
     berth_with_home(tmp.path())
         .args(["install", "github"])
@@ -603,5 +648,43 @@ fn update_shows_planned_message() {
         .unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("not yet available") || stdout.contains("Coming soon"));
+    assert!(stdout.contains("already up to date"));
+}
+
+#[test]
+fn update_non_installed_server_exits_1() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = berth_with_home(tmp.path())
+        .args(["update", "github"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("not installed"));
+}
+
+#[test]
+fn update_all_mixed_results_exits_1_and_reports_summary() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+    patch_installed_version(tmp.path(), "github", "0.9.0");
+
+    // Add an installed server entry that does not exist in the registry.
+    let servers_dir = tmp.path().join(".berth/servers");
+    let github_cfg = std::fs::read_to_string(servers_dir.join("github.toml")).unwrap();
+    std::fs::write(servers_dir.join("missing.toml"), github_cfg).unwrap();
+
+    let output = berth_with_home(tmp.path())
+        .args(["update", "--all"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.contains("Updated"));
+    assert!(stdout.contains("failed"));
+    assert!(stderr.contains("not found in the registry"));
 }

@@ -278,6 +278,32 @@ impl RuntimeManager {
         Ok(all[all.len() - lines..].to_vec())
     }
 
+    /// Appends a custom audit event for non-lifecycle runtime actions.
+    pub fn record_audit_event(
+        &self,
+        server: &str,
+        action: &str,
+        pid: Option<u32>,
+        command: Option<&str>,
+        args: Option<&[String]>,
+    ) -> io::Result<()> {
+        if action.trim().is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "audit action must not be empty",
+            ));
+        }
+
+        self.append_audit_event(AuditEvent {
+            timestamp_epoch_secs: now_epoch_secs(),
+            server: server.to_string(),
+            action: action.to_string(),
+            pid,
+            command: command.map(ToString::to_string),
+            args: args.filter(|v| !v.is_empty()).map(|v| v.to_vec()),
+        })
+    }
+
     /// Runtime state directory path.
     fn runtime_dir(&self) -> PathBuf {
         self.berth_home.join("runtime")

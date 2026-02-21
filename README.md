@@ -55,6 +55,7 @@ berth list
 | Start / stop / restart MCP servers | Working | Subprocess lifecycle controls with PID/state tracking |
 | MCP server health & status | Working | Runtime status from persisted state + process liveness checks |
 | MCP server log streaming | Working | Tail lifecycle events from persisted server logs |
+| MCP proxy mode | Working | Transparent stdio proxy execution for configured servers |
 | MCP permission management | Working | Inspect declared permissions and manage local grant/revoke overrides |
 | MCP audit trail | Working | JSONL audit events for lifecycle actions with server/time filters |
 | AI client integration | Working | Auto-configure Claude Desktop (Cursor/Windsurf planned) |
@@ -83,7 +84,7 @@ berth link claude-desktop      Link Berth-managed servers to Claude Desktop
 berth unlink claude-desktop    Remove Berth-managed servers from Claude Desktop
 berth link <client>            Link to other AI clients (planned)
 berth unlink <client>          Unlink from other AI clients (planned)
-berth proxy <server>           Run as transparent MCP proxy (planned)
+berth proxy <server>           Run as transparent MCP proxy
 ```
 
 ## Supported MCP Servers (seed registry)

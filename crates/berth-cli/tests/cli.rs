@@ -66,6 +66,46 @@ fn patch_installed_version(tmp: &std::path::Path, server: &str, version: &str) {
     std::fs::write(&config_path, rendered).unwrap();
 }
 
+fn patch_runtime_to_echo(tmp: &std::path::Path, server: &str) {
+    let config_path = tmp.join(".berth/servers").join(format!("{server}.toml"));
+    let content = std::fs::read_to_string(&config_path).unwrap();
+    let mut value: toml::Value = toml::from_str(&content).unwrap();
+    let runtime = value
+        .get_mut("runtime")
+        .and_then(toml::Value::as_table_mut)
+        .unwrap();
+
+    #[cfg(unix)]
+    {
+        runtime.insert("command".to_string(), toml::Value::String("sh".to_string()));
+        runtime.insert(
+            "args".to_string(),
+            toml::Value::Array(vec![
+                toml::Value::String("-c".to_string()),
+                toml::Value::String("echo proxy-ok".to_string()),
+            ]),
+        );
+    }
+
+    #[cfg(windows)]
+    {
+        runtime.insert(
+            "command".to_string(),
+            toml::Value::String("cmd".to_string()),
+        );
+        runtime.insert(
+            "args".to_string(),
+            toml::Value::Array(vec![
+                toml::Value::String("/C".to_string()),
+                toml::Value::String("echo proxy-ok".to_string()),
+            ]),
+        );
+    }
+
+    let rendered = toml::to_string_pretty(&value).unwrap();
+    std::fs::write(&config_path, rendered).unwrap();
+}
+
 // --- search ---
 
 #[test]
@@ -704,6 +744,66 @@ fn audit_invalid_since_exits_1() {
         .output()
         .unwrap();
     assert!(!output.status.success());
+}
+
+// --- proxy ---
+
+#[test]
+fn proxy_not_installed_exits_1() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = berth_with_home(tmp.path())
+        .args(["proxy", "github"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+}
+
+#[test]
+fn proxy_requires_config_before_running() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+
+    let output = berth_with_home(tmp.path())
+        .args(["proxy", "github"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Missing required config"));
+}
+
+#[test]
+fn proxy_executes_child_and_records_audit() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "token=abc123"])
+        .output()
+        .unwrap();
+    patch_runtime_to_echo(tmp.path(), "github");
+
+    let output = berth_with_home(tmp.path())
+        .args(["proxy", "github"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("proxy-ok"));
+
+    let audit = berth_with_home(tmp.path())
+        .args(["audit", "github"])
+        .output()
+        .unwrap();
+    assert!(audit.status.success());
+    let audit_out = String::from_utf8_lossy(&audit.stdout);
+    assert!(audit_out.contains("proxy-start"));
+    assert!(audit_out.contains("proxy-end"));
 }
 
 // --- update ---

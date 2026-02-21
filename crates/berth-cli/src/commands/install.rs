@@ -2,9 +2,13 @@
 
 use colored::Colorize;
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::process;
+use std::process::Command;
 
 use berth_registry::config::InstalledServer;
+use berth_registry::config::RuntimeInfo;
+use berth_registry::types::ServerMetadata;
 use berth_registry::Registry;
 
 use crate::paths;
@@ -75,7 +79,13 @@ pub fn execute(server_spec: &str) {
         }
     }
 
-    let installed = InstalledServer::from_metadata(meta);
+    let installed = match prepare_installed_server(server, meta) {
+        Ok(v) => v,
+        Err(msg) => {
+            eprintln!("{} {}", "✗".red().bold(), msg);
+            process::exit(1);
+        }
+    };
     let toml_str = match toml::to_string_pretty(&installed) {
         Ok(s) => s,
         Err(e) => {
@@ -113,6 +123,118 @@ pub fn execute(server_spec: &str) {
             format!("berth config {server}").bold()
         );
     }
+}
+
+/// Builds installed config from metadata and prepares runtime artifacts when needed.
+fn prepare_installed_server(
+    server: &str,
+    meta: &ServerMetadata,
+) -> Result<InstalledServer, String> {
+    let mut installed = InstalledServer::from_metadata(meta);
+    match installed.runtime.runtime_type.as_str() {
+        "node" => Ok(installed),
+        "python" => {
+            ensure_python_runtime(&mut installed.runtime, &installed.source.package);
+            Ok(installed)
+        }
+        "binary" => {
+            let binary_path = install_binary_artifact(server, &installed.source.package)?;
+            installed.runtime.command = binary_path.to_string_lossy().to_string();
+            Ok(installed)
+        }
+        other => Err(format!(
+            "Unsupported runtime type `{other}` for {}.",
+            server.cyan()
+        )),
+    }
+}
+
+/// Ensures python runtimes default to `uvx <package>` when command/args are missing.
+fn ensure_python_runtime(runtime: &mut RuntimeInfo, package: &str) {
+    if runtime.command.trim().is_empty() {
+        runtime.command = "uvx".to_string();
+    }
+    if runtime.args.is_empty() && !package.trim().is_empty() {
+        runtime.args.push(package.to_string());
+    }
+}
+
+/// Installs a binary artifact from local path/file URL/http URL into Berth's bin directory.
+fn install_binary_artifact(server: &str, package: &str) -> Result<PathBuf, String> {
+    let bin_dir =
+        paths::berth_bin_dir().ok_or_else(|| "Could not determine home directory.".to_string())?;
+    fs::create_dir_all(&bin_dir)
+        .map_err(|e| format!("failed to create {}: {e}", bin_dir.display()))?;
+
+    let mut file_name = server.to_string();
+    if cfg!(windows) && !file_name.to_ascii_lowercase().ends_with(".exe") {
+        file_name.push_str(".exe");
+    }
+    let destination = bin_dir.join(file_name);
+
+    if package.starts_with("http://") || package.starts_with("https://") {
+        download_binary(package, &destination)?;
+    } else {
+        let source = package.strip_prefix("file://").unwrap_or(package);
+        let source_path = Path::new(source);
+        if !source_path.exists() {
+            return Err(format!(
+                "Binary source {} does not exist.",
+                source_path.display()
+            ));
+        }
+        fs::copy(source_path, &destination).map_err(|e| {
+            format!(
+                "failed to copy binary {} -> {}: {e}",
+                source_path.display(),
+                destination.display()
+            )
+        })?;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&destination)
+            .map_err(|e| {
+                format!(
+                    "failed to read binary metadata {}: {e}",
+                    destination.display()
+                )
+            })?
+            .permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&destination, perms).map_err(|e| {
+            format!(
+                "failed to set executable permissions on {}: {e}",
+                destination.display()
+            )
+        })?;
+    }
+
+    Ok(destination)
+}
+
+/// Downloads a binary artifact using `curl` or `wget`.
+fn download_binary(url: &str, destination: &Path) -> Result<(), String> {
+    let destination_str = destination.to_string_lossy().to_string();
+    let curl_status = Command::new("curl")
+        .args(["-fsSL", "--max-time", "20", "-o", &destination_str, url])
+        .status();
+    if curl_status.is_ok_and(|s| s.success()) {
+        return Ok(());
+    }
+
+    let wget_status = Command::new("wget")
+        .args(["-q", "-O", &destination_str, url])
+        .status();
+    if wget_status.is_ok_and(|s| s.success()) {
+        return Ok(());
+    }
+
+    Err(format!(
+        "failed to download binary from {url} (curl/wget unavailable or request failed)"
+    ))
 }
 
 /// Parses `server` or `server@version` install specs.

@@ -16,6 +16,11 @@ pub fn berth_servers_dir() -> Option<PathBuf> {
     berth_home().map(|h| h.join("servers"))
 }
 
+/// Returns Berth binary install directory (`~/.berth/bin`).
+pub fn berth_bin_dir() -> Option<PathBuf> {
+    berth_home().map(|h| h.join("bin"))
+}
+
 /// Returns the config file path for a server (`<name>.toml`).
 pub fn server_config_path(name: &str) -> Option<PathBuf> {
     berth_servers_dir().map(|d| d.join(format!("{name}.toml")))

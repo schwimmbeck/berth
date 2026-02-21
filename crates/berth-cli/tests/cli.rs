@@ -12,6 +12,11 @@ fn berth_with_home(tmp: &std::path::Path) -> Command {
     cmd
 }
 
+fn write_registry_override(path: &std::path::Path, servers: serde_json::Value) {
+    let rendered = serde_json::to_string_pretty(&servers).unwrap();
+    std::fs::write(path, rendered).unwrap();
+}
+
 fn patch_runtime_to_long_running(tmp: &std::path::Path, server: &str) {
     let config_path = tmp.join(".berth/servers").join(format!("{server}.toml"));
     let content = std::fs::read_to_string(&config_path).unwrap();
@@ -512,6 +517,123 @@ fn install_invalid_server_spec_exits_1() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("Invalid server format"));
+}
+
+#[test]
+fn install_python_runtime_server_uses_uvx() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = berth_with_home(tmp.path())
+        .args(["install", "sequential-thinking"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let config_path = tmp.path().join(".berth/servers/sequential-thinking.toml");
+    let content = std::fs::read_to_string(config_path).unwrap();
+    let value: toml::Value = toml::from_str(&content).unwrap();
+    let runtime = value
+        .get("runtime")
+        .and_then(toml::Value::as_table)
+        .unwrap();
+    assert_eq!(
+        runtime.get("type").and_then(toml::Value::as_str),
+        Some("python")
+    );
+    assert_eq!(
+        runtime.get("command").and_then(toml::Value::as_str),
+        Some("uvx")
+    );
+}
+
+#[test]
+fn install_binary_runtime_server_copies_local_artifact() {
+    let tmp = tempfile::tempdir().unwrap();
+    let source_binary = tmp.path().join("source-binary");
+    std::fs::write(&source_binary, "#!/bin/sh\necho binary-demo\n").unwrap();
+
+    let registry_file = tmp.path().join("registry.json");
+    write_registry_override(
+        &registry_file,
+        serde_json::json!([
+          {
+            "name": "binary-demo",
+            "displayName": "Binary Demo Server",
+            "description": "Local binary runtime test server",
+            "version": "0.1.0",
+            "source": {
+              "type": "binary",
+              "package": source_binary.to_string_lossy(),
+              "repository": "https://example.com/binary-demo"
+            },
+            "runtime": {
+              "type": "binary",
+              "command": "binary-demo",
+              "args": []
+            },
+            "transport": "stdio",
+            "permissions": {
+              "network": [],
+              "env": [],
+              "filesystem": [],
+              "exec": []
+            },
+            "config": {
+              "required": [],
+              "optional": []
+            },
+            "compatibility": {
+              "clients": ["generic"],
+              "platforms": ["linux", "macos", "windows"]
+            },
+            "quality": {
+              "securityScan": "pass",
+              "healthCheck": true,
+              "lastVerified": "2026-02-21",
+              "downloads": 1
+            },
+            "category": "developer-tools",
+            "tags": ["binary", "test"],
+            "maintainer": "Test",
+            "trustLevel": "community"
+          }
+        ]),
+    );
+
+    let mut cmd = berth_with_home(tmp.path());
+    cmd.env("BERTH_REGISTRY_INDEX_FILE", &registry_file);
+    let output = cmd.args(["install", "binary-demo"]).output().unwrap();
+    assert!(output.status.success());
+
+    let binary_name = if cfg!(windows) {
+        "binary-demo.exe"
+    } else {
+        "binary-demo"
+    };
+    let installed_binary = tmp.path().join(".berth/bin").join(binary_name);
+    assert!(installed_binary.exists());
+
+    let config_path = tmp.path().join(".berth/servers/binary-demo.toml");
+    let content = std::fs::read_to_string(config_path).unwrap();
+    let value: toml::Value = toml::from_str(&content).unwrap();
+    let runtime = value
+        .get("runtime")
+        .and_then(toml::Value::as_table)
+        .unwrap();
+    let command = runtime
+        .get("command")
+        .and_then(toml::Value::as_str)
+        .unwrap();
+    assert_eq!(command, installed_binary.to_string_lossy());
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(installed_binary)
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_ne!(mode & 0o111, 0);
+    }
 }
 
 // --- uninstall ---

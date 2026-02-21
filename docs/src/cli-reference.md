@@ -15,6 +15,11 @@ berth config export [file]
 berth config import <file>
 ```
 
+Install runtimes supported by metadata:
+- Node (`npx`)
+- Python (`uvx`)
+- Binary artifacts (local path or URL)
+
 Runtime commands:
 
 ```text

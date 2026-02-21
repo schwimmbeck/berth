@@ -483,14 +483,14 @@
     "description": "Structured reasoning and chain-of-thought style planning utilities",
     "version": "0.6.2",
     "source": {
-      "type": "npm",
-      "package": "@modelcontextprotocol/server-sequential-thinking",
+      "type": "pypi",
+      "package": "mcp-sequential-thinking",
       "repository": "https://github.com/modelcontextprotocol/servers"
     },
     "runtime": {
-      "type": "node",
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+      "type": "python",
+      "command": "uvx",
+      "args": ["mcp-sequential-thinking"]
     },
     "transport": "stdio",
     "permissions": {

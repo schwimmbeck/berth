@@ -60,7 +60,7 @@ berth list
 | MCP server search | Working | Search the registry by name, tag, or category |
 | MCP server info | Working | View metadata, permissions, config, compatibility |
 | List installed MCP servers | Working | See what's installed and its status |
-| Install / uninstall / update MCP servers | Working | Install, remove, and update from the registry |
+| Install / uninstall / update MCP servers | Working | Install, remove, and update from the registry (supports `npx`, `uvx`, and binary artifacts) |
 | Configure MCP servers | Working | Set and view server configuration |
 | Start / stop / restart MCP servers | Working | Subprocess lifecycle controls with PID/state tracking, graceful-first shutdown, and optional bounded auto-restart policy |
 | MCP server health & status | Working | Runtime status with running/stopped/error plus PID and memory where available |

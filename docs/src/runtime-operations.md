@@ -31,6 +31,9 @@ Config keys:
 - `berth.sandbox` (`basic` / `off`)
 - `berth.sandbox-network` (`inherit` / `deny-all`)
 
+When auto-restart is enabled, Berth launches a hidden tokio-backed supervisor process that
+monitors crash exits and performs bounded restarts without requiring `berth status` polling.
+
 When sandbox mode is enabled:
 
 - Linux uses `landlock-restrict` for filesystem scope enforcement when available and `setpriv --no-new-privs` for additional hardening

@@ -1,6 +1,8 @@
 use std::collections::BTreeSet;
 use std::io::Write;
 use std::process::{Command, Stdio};
+use std::thread;
+use std::time::Duration;
 
 fn berth() -> Command {
     Command::new(env!("CARGO_BIN_EXE_berth"))
@@ -1263,21 +1265,86 @@ fn status_auto_restart_recovers_crash_when_enabled() {
         .output()
         .unwrap();
 
-    let status = berth_with_home(tmp.path())
-        .args(["status"])
-        .output()
-        .unwrap();
-    assert!(status.status.success());
-    let stdout = String::from_utf8_lossy(&status.stdout);
-    assert!(stdout.contains("running"));
+    let mut running_seen = false;
+    for _ in 0..80 {
+        let status = berth_with_home(tmp.path())
+            .args(["status"])
+            .output()
+            .unwrap();
+        assert!(status.status.success());
+        let stdout = String::from_utf8_lossy(&status.stdout);
+        if stdout.contains("running") {
+            running_seen = true;
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    assert!(running_seen);
 
-    let audit = berth_with_home(tmp.path())
-        .args(["audit", "github", "--action", "auto-restart"])
+    let mut restart_seen = false;
+    for _ in 0..80 {
+        let audit = berth_with_home(tmp.path())
+            .args(["audit", "github", "--action", "auto-restart"])
+            .output()
+            .unwrap();
+        assert!(audit.status.success());
+        let audit_out = String::from_utf8_lossy(&audit.stdout);
+        if audit_out.contains("auto-restart") {
+            restart_seen = true;
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    assert!(restart_seen);
+}
+
+#[test]
+fn auto_restart_happens_without_status_polling() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
         .output()
         .unwrap();
-    assert!(audit.status.success());
-    let audit_out = String::from_utf8_lossy(&audit.stdout);
-    assert!(audit_out.contains("auto-restart"));
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "token=abc123"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "berth.auto-restart=true"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "berth.max-restarts=1"])
+        .output()
+        .unwrap();
+    patch_runtime_to_fail_once_then_run(tmp.path(), "github");
+
+    let start = berth_with_home(tmp.path())
+        .args(["start", "github"])
+        .output()
+        .unwrap();
+    assert!(start.status.success());
+
+    let mut saw_restart = false;
+    for _ in 0..80 {
+        let audit = berth_with_home(tmp.path())
+            .args(["audit", "github", "--action", "auto-restart"])
+            .output()
+            .unwrap();
+        if audit.status.success() && String::from_utf8_lossy(&audit.stdout).contains("auto-restart")
+        {
+            saw_restart = true;
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    assert!(saw_restart);
+
+    let stop = berth_with_home(tmp.path())
+        .args(["stop", "github"])
+        .output()
+        .unwrap();
+    assert!(stop.status.success());
 }
 
 #[test]
@@ -1305,25 +1372,24 @@ fn auto_restart_respects_max_restarts_setting() {
         .args(["start", "github"])
         .output()
         .unwrap();
-    let _ = berth_with_home(tmp.path())
-        .args(["status"])
-        .output()
-        .unwrap();
-    let _ = berth_with_home(tmp.path())
-        .args(["status"])
-        .output()
-        .unwrap();
 
-    let audit = berth_with_home(tmp.path())
-        .args(["audit", "github", "--action", "auto-restart"])
-        .output()
-        .unwrap();
-    assert!(audit.status.success());
-    let audit_out = String::from_utf8_lossy(&audit.stdout);
-    let count = audit_out
-        .lines()
-        .filter(|l| l.trim_start().starts_with("auto-restart"))
-        .count();
+    let mut count = 0usize;
+    for _ in 0..80 {
+        let audit = berth_with_home(tmp.path())
+            .args(["audit", "github", "--action", "auto-restart"])
+            .output()
+            .unwrap();
+        assert!(audit.status.success());
+        let audit_out = String::from_utf8_lossy(&audit.stdout);
+        count = audit_out
+            .lines()
+            .filter(|l| l.trim_start().starts_with("auto-restart"))
+            .count();
+        if count >= 1 {
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
     assert_eq!(count, 1);
 }
 

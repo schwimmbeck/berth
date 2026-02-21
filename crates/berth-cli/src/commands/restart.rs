@@ -9,6 +9,7 @@ use berth_registry::config::InstalledServer;
 use berth_registry::Registry;
 use berth_runtime::{ProcessSpec, RuntimeManager};
 
+use crate::commands::supervise;
 use crate::paths;
 use crate::permission_filter::{
     filter_env_map, load_permission_overrides, undeclared_network_grants,
@@ -86,7 +87,7 @@ pub fn execute(server: &str) {
             process::exit(1);
         }
     };
-    let runtime = RuntimeManager::new(berth_home);
+    let runtime = RuntimeManager::new(berth_home.clone());
     let registry = Registry::from_seed();
     let (spec, undeclared_network) = match build_process_spec(server, &installed, &registry) {
         Ok(spec) => spec,
@@ -120,7 +121,13 @@ pub fn execute(server: &str) {
         );
     }
 
-    if let Err(e) = runtime.restart(server, &spec) {
+    let supervision_enabled = spec.auto_restart.is_some_and(|policy| policy.enabled);
+    let mut runtime_spec = spec.clone();
+    if supervision_enabled {
+        runtime_spec.auto_restart = None;
+    }
+
+    if let Err(e) = runtime.restart(server, &runtime_spec) {
         eprintln!(
             "{} Failed to restart {}: {}",
             "✗".red().bold(),
@@ -128,6 +135,19 @@ pub fn execute(server: &str) {
             e
         );
         process::exit(1);
+    }
+
+    if supervision_enabled {
+        if let Err(msg) = supervise::spawn_detached(server, &spec, &berth_home) {
+            let _ = runtime.stop(server);
+            eprintln!(
+                "{} Failed to start supervisor for {}: {}",
+                "✗".red().bold(),
+                server.cyan(),
+                msg
+            );
+            process::exit(1);
+        }
     }
 
     println!("{} Restarted {}.", "✓".green().bold(), server.cyan());

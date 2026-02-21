@@ -47,7 +47,7 @@ pub enum StopOutcome {
 }
 
 /// Runtime process specification for launching a server.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProcessSpec {
     pub command: String,
     pub args: Vec<String>,
@@ -56,7 +56,7 @@ pub struct ProcessSpec {
 }
 
 /// Auto-restart policy applied to supervised server processes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AutoRestartPolicy {
     pub enabled: bool,
     pub max_restarts: u32,
@@ -145,6 +145,16 @@ impl RuntimeManager {
                 }
             }
 
+            let expects_external_supervisor = spec
+                .and_then(|s| s.auto_restart)
+                .is_some_and(|policy| policy.enabled)
+                && !state.auto_restart_enabled;
+            if expects_external_supervisor
+                && self.wait_for_supervisor_replacement(server, old_pid)?
+            {
+                return Ok(ServerStatus::Running);
+            }
+
             // Record that a previously running process exited.
             state.status = ServerStatus::Stopped;
             state.pid = None;
@@ -212,6 +222,27 @@ impl RuntimeManager {
         }
 
         Ok(ServerStatus::Stopped)
+    }
+
+    /// Waits briefly for an external supervisor to replace a dead pid in state.
+    fn wait_for_supervisor_replacement(
+        &self,
+        server: &str,
+        old_pid: Option<u32>,
+    ) -> io::Result<bool> {
+        for _ in 0..10 {
+            thread::sleep(Duration::from_millis(50));
+            let state = self.read_state(server)?;
+            if state.status != ServerStatus::Running {
+                return Ok(false);
+            }
+            if let Some(pid) = state.pid {
+                if Some(pid) != old_pid && process_is_alive(pid) {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
     }
 
     /// Starts a server subprocess and records runtime state.
@@ -283,22 +314,43 @@ impl RuntimeManager {
         let old_command = state.command.clone();
         let old_args = state.args.clone();
         let mut outcome = StopOutcome::AlreadyStopped;
+        let pid_to_stop = state.pid.filter(|pid| process_is_alive(*pid));
 
-        if let Some(pid) = state.pid {
-            if process_is_alive(pid) {
-                terminate_process(pid)?;
-                outcome = StopOutcome::Stopped;
-            }
-        } else if state.status == ServerStatus::Running {
+        if pid_to_stop.is_some() || state.status == ServerStatus::Running {
             outcome = StopOutcome::Stopped;
         }
 
+        // Mark stopped before signaling so a background supervisor can observe intent and exit.
         state.status = ServerStatus::Stopped;
         state.pid = None;
         state.restart_attempts = 0;
         state.updated_at_epoch_secs = now_epoch_secs();
         self.write_state(server, &state)?;
         self.append_log(server, "STOP")?;
+
+        if let Some(pid) = pid_to_stop {
+            terminate_process(pid)?;
+        }
+
+        // Close a narrow race where a supervisor could spawn a replacement pid concurrently.
+        for _ in 0..5 {
+            let latest = self.read_state(server)?;
+            let Some(pid) = latest.pid else {
+                break;
+            };
+            if !process_is_alive(pid) {
+                break;
+            }
+            terminate_process(pid)?;
+            let mut reset = latest;
+            reset.status = ServerStatus::Stopped;
+            reset.pid = None;
+            reset.restart_attempts = 0;
+            reset.updated_at_epoch_secs = now_epoch_secs();
+            self.write_state(server, &reset)?;
+            thread::sleep(Duration::from_millis(20));
+        }
+
         if outcome == StopOutcome::Stopped {
             self.append_audit_event(AuditEvent {
                 timestamp_epoch_secs: now_epoch_secs(),
@@ -334,6 +386,149 @@ impl RuntimeManager {
             },
         })?;
         Ok(())
+    }
+
+    /// Runs a tokio-backed supervision loop for one server until stopped.
+    pub fn run_supervisor(&self, server: &str, spec: &ProcessSpec) -> io::Result<()> {
+        let policy = match spec.auto_restart {
+            Some(policy) if policy.enabled => policy,
+            _ => return Ok(()),
+        };
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .map_err(|e| io::Error::other(format!("failed to build tokio runtime: {e}")))?;
+
+        runtime.block_on(self.run_supervisor_loop(server, spec, policy))
+    }
+
+    /// Async supervision loop that monitors pid transitions and performs bounded restarts.
+    async fn run_supervisor_loop(
+        &self,
+        server: &str,
+        spec: &ProcessSpec,
+        policy: AutoRestartPolicy,
+    ) -> io::Result<()> {
+        let poll_interval = Duration::from_millis(100);
+        let mut restart_attempts = self.read_state(server)?.restart_attempts;
+
+        loop {
+            let state = self.read_state(server)?;
+            if state.status != ServerStatus::Running {
+                return Ok(());
+            }
+
+            let monitored_pid = match state.pid {
+                Some(pid) => pid,
+                None => {
+                    tokio::time::sleep(poll_interval).await;
+                    continue;
+                }
+            };
+
+            loop {
+                if !process_is_alive(monitored_pid) {
+                    break;
+                }
+                tokio::time::sleep(poll_interval).await;
+                let latest = self.read_state(server)?;
+                if latest.status != ServerStatus::Running {
+                    return Ok(());
+                }
+                if latest.pid != Some(monitored_pid) {
+                    // Another process took ownership; this supervisor exits.
+                    return Ok(());
+                }
+            }
+
+            let state_after_exit = self.read_state(server)?;
+            if state_after_exit.status != ServerStatus::Running {
+                return Ok(());
+            }
+            if state_after_exit.pid != Some(monitored_pid) {
+                return Ok(());
+            }
+
+            self.append_log(server, "EXIT")?;
+            self.append_audit_event(AuditEvent {
+                timestamp_epoch_secs: now_epoch_secs(),
+                server: server.to_string(),
+                action: "exit".to_string(),
+                pid: Some(monitored_pid),
+                command: state_after_exit.command.clone(),
+                args: if state_after_exit.args.is_empty() {
+                    None
+                } else {
+                    Some(state_after_exit.args.clone())
+                },
+            })?;
+
+            if restart_attempts >= policy.max_restarts {
+                let mut stopped_state = state_after_exit;
+                stopped_state.status = ServerStatus::Stopped;
+                stopped_state.pid = None;
+                stopped_state.updated_at_epoch_secs = now_epoch_secs();
+                stopped_state.restart_attempts = restart_attempts;
+                self.write_state(server, &stopped_state)?;
+                return Ok(());
+            }
+
+            let control_state = self.read_state(server)?;
+            if control_state.status != ServerStatus::Running
+                || control_state.pid != Some(monitored_pid)
+            {
+                return Ok(());
+            }
+
+            let log_file = self.open_log_append(server)?;
+            let err_file = log_file.try_clone()?;
+            let child = Command::new(&spec.command)
+                .args(&spec.args)
+                .envs(&spec.env)
+                .stdin(Stdio::null())
+                .stdout(Stdio::from(log_file))
+                .stderr(Stdio::from(err_file))
+                .spawn()
+                .map_err(|e| io::Error::new(e.kind(), format!("failed to spawn process: {e}")))?;
+            let pid = child.id();
+            drop(child);
+
+            // Stop could have raced with this spawn; terminate immediately if so.
+            if self.read_state(server)?.status != ServerStatus::Running {
+                let _ = terminate_process(pid);
+                return Ok(());
+            }
+
+            restart_attempts += 1;
+            let mut restarted_state = self.read_state(server)?;
+            restarted_state.status = ServerStatus::Running;
+            restarted_state.pid = Some(pid);
+            restarted_state.command = Some(spec.command.clone());
+            restarted_state.args = spec.args.clone();
+            restarted_state.updated_at_epoch_secs = now_epoch_secs();
+            restarted_state.restart_attempts = restart_attempts;
+            self.write_state(server, &restarted_state)?;
+            self.append_log(
+                server,
+                &format!(
+                    "AUTO_RESTART pid={pid} attempt={}/{}",
+                    restart_attempts, policy.max_restarts
+                ),
+            )?;
+            self.append_audit_event(AuditEvent {
+                timestamp_epoch_secs: now_epoch_secs(),
+                server: server.to_string(),
+                action: "auto-restart".to_string(),
+                pid: Some(pid),
+                command: Some(spec.command.clone()),
+                args: if spec.args.is_empty() {
+                    None
+                } else {
+                    Some(spec.args.clone())
+                },
+            })?;
+        }
     }
 
     /// Returns the last `lines` log lines for a server.
@@ -705,6 +900,55 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    fn fail_once_then_run_spec(marker_path: &str, max_restarts: u32) -> ProcessSpec {
+        ProcessSpec {
+            command: "sh".to_string(),
+            args: vec![
+                "-c".to_string(),
+                format!(
+                    "if [ -f '{marker_path}' ]; then sleep 60; else touch '{marker_path}'; exit 1; fi"
+                ),
+            ],
+            env: BTreeMap::new(),
+            auto_restart: Some(AutoRestartPolicy {
+                enabled: true,
+                max_restarts,
+            }),
+        }
+    }
+
+    #[cfg(windows)]
+    fn fail_once_then_run_spec(marker_path: &str, max_restarts: u32) -> ProcessSpec {
+        ProcessSpec {
+            command: "cmd".to_string(),
+            args: vec![
+                "/C".to_string(),
+                format!(
+                    "if exist \"{marker_path}\" (timeout /T 60 /NOBREAK >NUL) else (type nul > \"{marker_path}\" & exit /B 1)"
+                ),
+            ],
+            env: BTreeMap::new(),
+            auto_restart: Some(AutoRestartPolicy {
+                enabled: true,
+                max_restarts,
+            }),
+        }
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    fn fail_once_then_run_spec(_marker_path: &str, max_restarts: u32) -> ProcessSpec {
+        ProcessSpec {
+            command: "unsupported".to_string(),
+            args: vec![],
+            env: BTreeMap::new(),
+            auto_restart: Some(AutoRestartPolicy {
+                enabled: true,
+                max_restarts,
+            }),
+        }
+    }
+
     #[test]
     fn version_is_set() {
         assert!(!version().is_empty());
@@ -848,5 +1092,38 @@ mod tests {
             .filter(|l| l.contains("\"action\":\"auto-restart\""))
             .count();
         assert_eq!(count, 1);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn tokio_supervisor_recovers_crash_without_status_polling() {
+        let (tmp, manager) = manager();
+        let marker = tmp.path().join(".berth/runtime/github.restart-flag");
+        fs::create_dir_all(marker.parent().unwrap()).unwrap();
+        let marker_path = marker.to_string_lossy().to_string();
+
+        let supervisor_spec = fail_once_then_run_spec(&marker_path, 1);
+        let mut start_spec = supervisor_spec.clone();
+        start_spec.auto_restart = None;
+        manager.start("github", &start_spec).unwrap();
+
+        let supervisor_manager = RuntimeManager::new(tmp.path().join(".berth"));
+        let thread_spec = supervisor_spec.clone();
+        let handle =
+            thread::spawn(move || supervisor_manager.run_supervisor("github", &thread_spec));
+
+        let mut recovered = false;
+        for _ in 0..200 {
+            let state = manager.read_state("github").unwrap();
+            if state.restart_attempts == 1 && state.pid.is_some_and(process_is_alive) {
+                recovered = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(recovered);
+
+        let _ = manager.stop("github");
+        handle.join().unwrap().unwrap();
     }
 }

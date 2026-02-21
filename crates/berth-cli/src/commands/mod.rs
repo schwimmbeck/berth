@@ -14,6 +14,7 @@ pub mod search;
 pub mod start;
 pub mod status;
 pub mod stop;
+pub mod supervise;
 pub mod uninstall;
 pub mod unlink;
 pub mod update;
@@ -177,6 +178,13 @@ pub enum Commands {
         /// Server name
         server: String,
     },
+
+    /// Internal process supervisor loop (hidden).
+    #[command(hide = true, name = "__supervise")]
+    Supervise {
+        /// Server name
+        server: String,
+    },
 }
 
 /// Dispatches a parsed CLI command to its command module.
@@ -237,5 +245,6 @@ pub fn execute(command: Commands) {
         Commands::Link { client } => link::execute(&client),
         Commands::Unlink { client } => unlink::execute(&client),
         Commands::Proxy { server } => proxy::execute(&server),
+        Commands::Supervise { server } => supervise::execute(&server),
     }
 }

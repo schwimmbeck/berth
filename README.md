@@ -212,7 +212,7 @@ berth/
   crates/
     berth-cli/                   # Binary crate (the `berth` command)
     berth-registry/              # MCP server registry client, types, search engine
-    berth-runtime/               # MCP server runtime state management (tokio supervision planned)
+    berth-runtime/               # MCP server runtime state management with tokio-backed supervision
 ```
 
 ## Related

@@ -10,6 +10,7 @@ use berth_registry::config::InstalledServer;
 use berth_registry::Registry;
 use berth_runtime::{ProcessSpec, RuntimeManager, StartOutcome};
 
+use crate::commands::supervise;
 use crate::paths;
 use crate::permission_filter::{
     filter_env_map, load_permission_overrides, undeclared_network_grants,
@@ -31,7 +32,7 @@ pub fn execute(server: Option<&str>) {
             process::exit(1);
         }
     };
-    let runtime = RuntimeManager::new(berth_home);
+    let runtime = RuntimeManager::new(berth_home.clone());
 
     let mut started = 0usize;
     let mut already_running = 0usize;
@@ -103,8 +104,27 @@ pub fn execute(server: Option<&str>) {
                 Some(&installed.runtime.args),
             );
         }
-        match runtime.start(name, &spec) {
+        let supervision_enabled = spec.auto_restart.is_some_and(|policy| policy.enabled);
+        let mut runtime_spec = spec.clone();
+        if supervision_enabled {
+            runtime_spec.auto_restart = None;
+        }
+
+        match runtime.start(name, &runtime_spec) {
             Ok(StartOutcome::Started) => {
+                if supervision_enabled {
+                    if let Err(msg) = supervise::spawn_detached(name, &spec, &berth_home) {
+                        let _ = runtime.stop(name);
+                        eprintln!(
+                            "{} Failed to start supervisor for {}: {}",
+                            "✗".red().bold(),
+                            name.cyan(),
+                            msg
+                        );
+                        failed += 1;
+                        continue;
+                    }
+                }
                 println!("{} Started {}.", "✓".green().bold(), name.cyan());
                 started += 1;
             }

@@ -144,6 +144,9 @@ cargo fmt --all
 
 # Build documentation site
 make docs
+
+# Run CI quality smoke checks locally
+bash scripts/quality-checks.sh
 ```
 
 ## Project Structure

@@ -14,12 +14,13 @@ pub fn execute(client: &str) {
         Some(p) => p,
         None => {
             eprintln!(
-                "{} Unsupported client {}. Supported: {}, {}, {}.",
+                "{} Unsupported client {}. Supported: {}, {}, {}, {}.",
                 "✗".red().bold(),
                 client.cyan(),
                 "claude-desktop".bold(),
                 "cursor".bold(),
-                "windsurf".bold()
+                "windsurf".bold(),
+                "continue".bold()
             );
             process::exit(1);
         }

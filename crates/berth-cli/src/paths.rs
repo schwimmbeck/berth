@@ -37,6 +37,7 @@ pub fn client_config_path(client: &str) -> Option<PathBuf> {
         "claude-desktop" => ("claude-desktop", "claude_desktop_config.json"),
         "cursor" => ("cursor", "cursor_mcp_config.json"),
         "windsurf" => ("windsurf", "windsurf_mcp_config.json"),
+        "continue" => ("continue", "continue_config.json"),
         _ => return None,
     };
 
@@ -128,6 +129,7 @@ pub fn client_config_path(client: &str) -> Option<PathBuf> {
                     .join("mcp.json")
             }
         }
+        "continue" => home.join(".continue").join("config.json"),
         _ => unreachable!(),
     })
 }

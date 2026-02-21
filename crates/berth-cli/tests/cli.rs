@@ -1114,6 +1114,66 @@ fn unlink_windsurf_removes_linked_servers() {
 }
 
 #[test]
+fn link_continue_writes_config() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "token=abc123"])
+        .output()
+        .unwrap();
+
+    let output = berth_with_home(tmp.path())
+        .args(["link", "continue"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let config_path = tmp
+        .path()
+        .join(".berth/clients/continue/continue_config.json");
+    assert!(config_path.exists());
+    let content = std::fs::read_to_string(config_path).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&content).unwrap();
+    assert_eq!(
+        json["mcpServers"]["github"]["env"]["GITHUB_TOKEN"],
+        "abc123"
+    );
+}
+
+#[test]
+fn unlink_continue_removes_linked_servers() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "token=abc123"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["link", "continue"])
+        .output()
+        .unwrap();
+
+    let output = berth_with_home(tmp.path())
+        .args(["unlink", "continue"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let config_path = tmp
+        .path()
+        .join(".berth/clients/continue/continue_config.json");
+    let content = std::fs::read_to_string(config_path).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&content).unwrap();
+    assert!(json["mcpServers"]["github"].is_null());
+}
+
+#[test]
 fn link_unknown_client_exits_1() {
     let output = berth().args(["link", "unknown-client"]).output().unwrap();
     assert!(!output.status.success());

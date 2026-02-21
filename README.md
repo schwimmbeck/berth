@@ -58,7 +58,7 @@ berth list
 | MCP proxy mode | Working | Transparent stdio proxy execution for configured servers |
 | MCP permission management | Working | Inspect declared/effective permissions, enforce env overrides at launch/link time, and block launch when network is fully revoked |
 | MCP audit trail | Working | JSONL audit events for lifecycle actions with server/time filters |
-| AI client integration | Working | Auto-configure Claude Desktop, Cursor, and Windsurf |
+| AI client integration | Working | Auto-configure Claude Desktop, Cursor, Windsurf, and Continue |
 
 ## Commands
 
@@ -82,8 +82,8 @@ berth logs <server>            Show recent MCP server logs
 
 berth permissions <server>     Show/manage/export MCP server permissions (--grant/--revoke/--reset/--export)
 berth audit [server]           View/export runtime audit log (supports --since, --action, --json, and --export)
-berth link <client>            Link Berth-managed servers to claude-desktop, cursor, or windsurf
-berth unlink <client>          Unlink Berth-managed servers from claude-desktop, cursor, or windsurf
+berth link <client>            Link Berth-managed servers to claude-desktop, cursor, windsurf, or continue
+berth unlink <client>          Unlink Berth-managed servers from claude-desktop, cursor, windsurf, or continue
 berth proxy <server>           Run as transparent MCP proxy
 ```
 
@@ -150,6 +150,7 @@ berth/
 - [MCP Servers](https://github.com/modelcontextprotocol/servers) — Official MCP server implementations
 - [Claude Desktop](https://claude.ai/download) — AI client with MCP support
 - [Cursor](https://cursor.sh) — AI code editor with MCP support
+- [Continue](https://www.continue.dev) — Open-source AI coding assistant
 
 ## License
 

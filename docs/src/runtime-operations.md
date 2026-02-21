@@ -28,6 +28,11 @@ Config keys:
 - `berth.sandbox` (`basic` / `off`)
 - `berth.sandbox-network` (`inherit` / `deny-all`)
 
+When sandbox mode is enabled:
+
+- Linux uses `setpriv --no-new-privs` when available (best effort)
+- Other platforms fall back to standard process launch while preserving policy config
+
 Example:
 
 ```bash

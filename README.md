@@ -99,6 +99,9 @@ Runtime and sandbox config keys:
 - `berth.sandbox` (`basic` or `off`)
 - `berth.sandbox-network` (`inherit` or `deny-all`)
 
+Sandbox runtime note:
+- On Linux, `berth.sandbox=basic` attempts a hardened launch via `setpriv --no-new-privs` when available.
+
 Security behavior examples:
 - Env secret filtering at launch:
   - `berth permissions github --revoke env:GITHUB_TOKEN`

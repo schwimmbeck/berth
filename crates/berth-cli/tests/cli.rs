@@ -819,6 +819,36 @@ fn start_blocks_when_sandbox_network_deny_all_and_audits() {
 }
 
 #[test]
+fn proxy_sets_sandbox_env_when_basic_enabled() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "token=abc123"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "berth.sandbox=basic"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "berth.sandbox-network=inherit"])
+        .output()
+        .unwrap();
+    patch_runtime_to_print_env_var(tmp.path(), "github", "BERTH_SANDBOX_MODE");
+
+    let output = berth_with_home(tmp.path())
+        .args(["proxy", "github"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("env-present"));
+}
+
+#[test]
 fn start_then_status_shows_running() {
     let tmp = tempfile::tempdir().unwrap();
     berth_with_home(tmp.path())

@@ -15,6 +15,7 @@ use crate::permission_filter::{
     NETWORK_PERMISSION_DENIED_PREFIX,
 };
 use crate::sandbox_policy::{parse_sandbox_policy, KEY_SANDBOX_NETWORK};
+use crate::sandbox_runtime::apply_sandbox_runtime;
 
 /// Executes the `berth proxy` command.
 pub fn execute(server: &str) {
@@ -202,14 +203,16 @@ fn build_process_spec(
         ));
     }
     filter_env_map(&mut env, &installed.permissions.env, &overrides);
-    if sandbox_policy.enabled {
-        env.insert("BERTH_SANDBOX_MODE".to_string(), "basic".to_string());
-        env.insert("BERTH_SANDBOX_NETWORK".to_string(), "inherit".to_string());
-    }
+    let (command, args) = apply_sandbox_runtime(
+        &installed.runtime.command,
+        &installed.runtime.args,
+        &mut env,
+        sandbox_policy,
+    );
 
     Ok(ProcessSpec {
-        command: installed.runtime.command.clone(),
-        args: installed.runtime.args.clone(),
+        command,
+        args,
         env,
         auto_restart: None,
     })

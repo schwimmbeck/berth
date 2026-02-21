@@ -17,6 +17,7 @@ use crate::permission_filter::{
 };
 use crate::runtime_policy::parse_runtime_policy;
 use crate::sandbox_policy::parse_sandbox_policy;
+use crate::sandbox_runtime::apply_sandbox_runtime;
 
 #[derive(Debug, Deserialize)]
 struct RuntimeStateSnapshot {
@@ -207,14 +208,16 @@ fn build_process_spec(
     if sandbox_policy.network_deny_all {
         policy.enabled = false;
     }
-    if sandbox_policy.enabled {
-        env.insert("BERTH_SANDBOX_MODE".to_string(), "basic".to_string());
-        env.insert("BERTH_SANDBOX_NETWORK".to_string(), "inherit".to_string());
-    }
+    let (command, args) = apply_sandbox_runtime(
+        &installed.runtime.command,
+        &installed.runtime.args,
+        &mut env,
+        sandbox_policy,
+    );
 
     Ok(ProcessSpec {
-        command: installed.runtime.command.clone(),
-        args: installed.runtime.args.clone(),
+        command,
+        args,
         env,
         auto_restart: Some(policy),
     })

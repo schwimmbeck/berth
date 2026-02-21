@@ -65,6 +65,9 @@ pub enum Commands {
         /// Server name, or 'export'/'import' for config sharing
         server: String,
 
+        /// Path for `config export` output or `config import` input
+        path: Option<String>,
+
         /// Set a config value (key=value)
         #[arg(long)]
         set: Option<String>,
@@ -165,7 +168,12 @@ pub fn execute(command: Commands) {
         Commands::Install { server } => install::execute(&server),
         Commands::Uninstall { server } => uninstall::execute(&server),
         Commands::Update { server, all } => update::execute(server.as_deref(), all),
-        Commands::Config { server, set, env } => config::execute(&server, set.as_deref(), env),
+        Commands::Config {
+            server,
+            path,
+            set,
+            env,
+        } => config::execute(&server, path.as_deref(), set.as_deref(), env),
         Commands::Start { server } => start::execute(server.as_deref()),
         Commands::Stop { server } => stop::execute(server.as_deref()),
         Commands::Restart { server } => restart::execute(&server),

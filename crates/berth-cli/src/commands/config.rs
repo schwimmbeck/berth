@@ -1,7 +1,10 @@
 //! Command handler for `berth config`.
 
 use colored::Colorize;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::process;
 
 use berth_registry::config::InstalledServer;
@@ -9,8 +12,65 @@ use berth_registry::Registry;
 
 use crate::paths;
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ConfigBundle {
+    version: u32,
+    servers: BTreeMap<String, BTreeMap<String, String>>,
+}
+
 /// Executes the `berth config` command.
-pub fn execute(server: &str, set: Option<&str>, env: bool) {
+pub fn execute(server: &str, path: Option<&str>, set: Option<&str>, env: bool) {
+    if server == "export" {
+        if set.is_some() || env {
+            eprintln!(
+                "{} `config export` does not support {} or {}.",
+                "✗".red().bold(),
+                "--set".bold(),
+                "--env".bold()
+            );
+            process::exit(1);
+        }
+        export_config_bundle(path);
+        return;
+    }
+
+    if server == "import" {
+        if set.is_some() || env {
+            eprintln!(
+                "{} `config import` does not support {} or {}.",
+                "✗".red().bold(),
+                "--set".bold(),
+                "--env".bold()
+            );
+            process::exit(1);
+        }
+        let file_path = match path {
+            Some(p) => p,
+            None => {
+                eprintln!(
+                    "{} Missing import file. Use: {}",
+                    "✗".red().bold(),
+                    "berth config import <file>".bold()
+                );
+                process::exit(1);
+            }
+        };
+        import_config_bundle(file_path);
+        return;
+    }
+
+    if path.is_some() {
+        eprintln!(
+            "{} Unexpected extra argument for {}. Use only with {} or {}.",
+            "✗".red().bold(),
+            server.cyan(),
+            "berth config export [file]".bold(),
+            "berth config import <file>".bold()
+        );
+        process::exit(1);
+    }
+
     let config_path = match paths::server_config_path(server) {
         Some(p) => p,
         None => {
@@ -99,7 +159,7 @@ fn show_config(server: &str, config_path: &std::path::Path) {
 }
 
 /// Sets a single config value (`key=value`) for an installed server.
-fn set_config(server: &str, kv: &str, config_path: &std::path::Path) {
+fn set_config(server: &str, kv: &str, config_path: &Path) {
     let (key, value) = match kv.split_once('=') {
         Some((k, v)) => (k.trim(), v.trim()),
         None => {
@@ -219,4 +279,235 @@ fn show_env(server: &str) {
     }
 
     println!();
+}
+
+/// Exports all installed non-empty server config values as a TOML bundle.
+fn export_config_bundle(path: Option<&str>) {
+    let entries = match installed_server_entries() {
+        Ok(v) => v,
+        Err(msg) => {
+            eprintln!("{} {}", "✗".red().bold(), msg);
+            process::exit(1);
+        }
+    };
+
+    let mut servers: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
+    for (name, config_path) in &entries {
+        let installed = match read_installed(config_path) {
+            Ok(v) => v,
+            Err(msg) => {
+                eprintln!(
+                    "{} Failed to read {}: {}",
+                    "✗".red().bold(),
+                    name.cyan(),
+                    msg
+                );
+                process::exit(1);
+            }
+        };
+
+        let values: BTreeMap<String, String> = installed
+            .config
+            .into_iter()
+            .filter(|(_, v)| !v.trim().is_empty())
+            .collect();
+        servers.insert(name.clone(), values);
+    }
+
+    let bundle = ConfigBundle {
+        version: 1,
+        servers,
+    };
+    let rendered = match toml::to_string_pretty(&bundle) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!(
+                "{} Failed to serialize config bundle: {}",
+                "✗".red().bold(),
+                e
+            );
+            process::exit(1);
+        }
+    };
+
+    if let Some(out_path) = path {
+        let out = PathBuf::from(out_path);
+        if let Some(parent) = out.parent() {
+            if !parent.as_os_str().is_empty() {
+                if let Err(e) = fs::create_dir_all(parent) {
+                    eprintln!(
+                        "{} Failed to create output directory {}: {}",
+                        "✗".red().bold(),
+                        parent.display(),
+                        e
+                    );
+                    process::exit(1);
+                }
+            }
+        }
+        if let Err(e) = fs::write(&out, rendered) {
+            eprintln!(
+                "{} Failed to write export file {}: {}",
+                "✗".red().bold(),
+                out.display(),
+                e
+            );
+            process::exit(1);
+        }
+        println!(
+            "{} Exported {} server config(s) to {}.",
+            "✓".green().bold(),
+            entries.len(),
+            out.display()
+        );
+        return;
+    }
+
+    println!("{rendered}");
+}
+
+/// Imports server config values from a TOML bundle and applies known keys.
+fn import_config_bundle(path: &str) {
+    let content = match fs::read_to_string(path) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!(
+                "{} Failed to read import file {}: {}",
+                "✗".red().bold(),
+                path,
+                e
+            );
+            process::exit(1);
+        }
+    };
+    let bundle: ConfigBundle = match toml::from_str(&content) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("{} Failed to parse import file: {}", "✗".red().bold(), e);
+            process::exit(1);
+        }
+    };
+    if bundle.version != 1 {
+        eprintln!(
+            "{} Unsupported config bundle version {}.",
+            "✗".red().bold(),
+            bundle.version
+        );
+        process::exit(1);
+    }
+
+    let mut updated_servers = 0usize;
+    let mut updated_values = 0usize;
+    let mut skipped_not_installed = 0usize;
+    let mut skipped_unknown_keys = 0usize;
+
+    for (server, import_values) in &bundle.servers {
+        let config_path = match paths::server_config_path(server) {
+            Some(p) => p,
+            None => {
+                eprintln!("{} Could not determine home directory.", "✗".red().bold());
+                process::exit(1);
+            }
+        };
+        if !config_path.exists() {
+            skipped_not_installed += 1;
+            continue;
+        }
+
+        let mut installed = match read_installed(&config_path) {
+            Ok(v) => v,
+            Err(msg) => {
+                eprintln!(
+                    "{} Failed to load config for {}: {}",
+                    "✗".red().bold(),
+                    server.cyan(),
+                    msg
+                );
+                process::exit(1);
+            }
+        };
+
+        let mut changed = false;
+        for (key, value) in import_values {
+            if value.trim().is_empty() {
+                continue;
+            }
+            let is_known = installed.config_meta.required_keys.contains(key)
+                || installed.config_meta.optional_keys.contains(key);
+            if !is_known {
+                skipped_unknown_keys += 1;
+                continue;
+            }
+            if installed.config.get(key).is_none_or(|v| v != value) {
+                installed.config.insert(key.clone(), value.clone());
+                updated_values += 1;
+                changed = true;
+            }
+        }
+
+        if changed {
+            let rendered = match toml::to_string_pretty(&installed) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!(
+                        "{} Failed to serialize updated config for {}: {}",
+                        "✗".red().bold(),
+                        server.cyan(),
+                        e
+                    );
+                    process::exit(1);
+                }
+            };
+            if let Err(e) = fs::write(&config_path, rendered) {
+                eprintln!(
+                    "{} Failed to write updated config for {}: {}",
+                    "✗".red().bold(),
+                    server.cyan(),
+                    e
+                );
+                process::exit(1);
+            }
+            updated_servers += 1;
+        }
+    }
+
+    println!(
+        "{} Import summary: updated servers: {}, updated values: {}, skipped (not installed): {}, skipped unknown keys: {}.",
+        "✓".green().bold(),
+        updated_servers,
+        updated_values,
+        skipped_not_installed,
+        skipped_unknown_keys
+    );
+}
+
+/// Returns installed server file entries as `(server_name, path)` sorted by name.
+fn installed_server_entries() -> Result<Vec<(String, PathBuf)>, String> {
+    let servers_dir = paths::berth_servers_dir().ok_or("Could not determine home directory.")?;
+    if !servers_dir.exists() {
+        return Err("No servers installed. Run `berth install <server>` first.".to_string());
+    }
+
+    let mut entries: Vec<(String, PathBuf)> = fs::read_dir(&servers_dir)
+        .map_err(|e| format!("Failed to read installed servers: {e}"))?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|ext| ext == "toml"))
+        .filter_map(|p| {
+            let name = p.file_stem()?.to_string_lossy().to_string();
+            Some((name, p))
+        })
+        .collect();
+
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    if entries.is_empty() {
+        return Err("No servers installed. Run `berth install <server>` first.".to_string());
+    }
+    Ok(entries)
+}
+
+/// Reads and parses an installed server config file.
+fn read_installed(path: &Path) -> Result<InstalledServer, String> {
+    let content = fs::read_to_string(path).map_err(|e| format!("Failed to read config: {e}"))?;
+    toml::from_str::<InstalledServer>(&content).map_err(|e| format!("Failed to parse config: {e}"))
 }

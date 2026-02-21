@@ -416,6 +416,55 @@ fn config_env_shows_variables() {
     assert!(stdout.contains("GITHUB_TOKEN"));
 }
 
+#[test]
+fn config_export_import_round_trip() {
+    let source = tempfile::tempdir().unwrap();
+    berth_with_home(source.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(source.path())
+        .args(["config", "github", "--set", "token=abc123"])
+        .output()
+        .unwrap();
+
+    let export_file = source.path().join("team-berth.toml");
+    let export = berth_with_home(source.path())
+        .args(["config", "export", export_file.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(export.status.success());
+    assert!(export_file.exists());
+
+    let target = tempfile::tempdir().unwrap();
+    berth_with_home(target.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+
+    let import = berth_with_home(target.path())
+        .args(["config", "import", export_file.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(import.status.success());
+
+    let target_config =
+        std::fs::read_to_string(target.path().join(".berth/servers/github.toml")).unwrap();
+    assert!(target_config.contains("abc123"));
+}
+
+#[test]
+fn config_import_requires_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = berth_with_home(tmp.path())
+        .args(["config", "import"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Missing import file"));
+}
+
 // --- list with version ---
 
 #[test]

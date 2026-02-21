@@ -71,6 +71,8 @@ berth install <server>         Install an MCP server
 berth uninstall <server>       Remove an MCP server
 berth update <server|--all>    Update MCP servers
 berth config <server>          Configure an MCP server
+berth config export [file]     Export installed server config values as TOML bundle
+berth config import <file>     Import server config values from TOML bundle
 
 berth start [server]           Start MCP server(s)
 berth stop [server]            Stop MCP server(s)

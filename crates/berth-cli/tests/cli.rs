@@ -35,6 +35,30 @@ fn http_get(addr: &str, path: &str) -> (u16, String) {
     (status, body)
 }
 
+fn http_post_json(addr: &str, path: &str, body: &str) -> (u16, String) {
+    let mut stream = TcpStream::connect(addr).unwrap();
+    let request = format!(
+        "POST {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    stream.write_all(request.as_bytes()).unwrap();
+
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    let first_line = response.lines().next().unwrap_or_default();
+    let status = first_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse::<u16>().ok())
+        .unwrap_or(0);
+    let body = response
+        .split_once("\r\n\r\n")
+        .map(|(_, b)| b.to_string())
+        .unwrap_or_default();
+    (status, body)
+}
+
 fn write_registry_override(path: &std::path::Path, servers: serde_json::Value) {
     let rendered = serde_json::to_string_pretty(&servers).unwrap();
     std::fs::write(path, rendered).unwrap();
@@ -522,7 +546,7 @@ fn registry_api_serves_health_search_and_downloads() {
             "--bind",
             "127.0.0.1:0",
             "--max-requests",
-            "5",
+            "8",
         ])
         .stdout(Stdio::piped())
         .spawn()
@@ -585,6 +609,26 @@ fn registry_api_serves_health_search_and_downloads() {
         downloads["installCommand"].as_str(),
         Some("berth install github")
     );
+
+    let (star_status, star_body) = http_post_json(&addr, "/servers/github/star", "{}");
+    assert_eq!(star_status, 200);
+    let star: serde_json::Value = serde_json::from_str(&star_body).unwrap();
+    assert!(star["stars"].as_u64().unwrap_or(0) >= 1);
+
+    let (report_status, report_body) = http_post_json(
+        &addr,
+        "/servers/github/report",
+        "{\"reason\":\"spam\",\"details\":\"broken output\"}",
+    );
+    assert_eq!(report_status, 200);
+    let report: serde_json::Value = serde_json::from_str(&report_body).unwrap();
+    assert_eq!(report["status"].as_str(), Some("received"));
+
+    let (community_status, community_body) = http_get(&addr, "/servers/github/community");
+    assert_eq!(community_status, 200);
+    let community: serde_json::Value = serde_json::from_str(&community_body).unwrap();
+    assert!(community["stars"].as_u64().unwrap_or(0) >= 1);
+    assert!(community["reports"].as_u64().unwrap_or(0) >= 1);
 
     let status = child.wait().unwrap();
     assert!(status.success());

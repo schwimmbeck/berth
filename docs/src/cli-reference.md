@@ -53,6 +53,9 @@ Registry API endpoints:
 - `GET /servers/filters`
 - `GET /servers/<name>`
 - `GET /servers/<name>/downloads`
+- `GET /servers/<name>/community`
+- `POST /servers/<name>/star`
+- `POST /servers/<name>/report`
 
 Client integration:
 

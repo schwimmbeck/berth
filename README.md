@@ -71,6 +71,7 @@ berth list
 | AI client integration | Working | Auto-configure Claude Desktop, Cursor, Windsurf, Continue, and VS Code |
 | Registry API (local) | Working | Serve REST endpoints for health, search, server detail, and download counts from the current registry dataset |
 | Registry publish workflow | Working | Validate `berth.toml`, run local quality checks, and enqueue submission artifacts for manual review |
+| Community signals (local API) | Working | Submit stars and reports for servers with persisted local community counters |
 
 ## Commands
 
@@ -108,6 +109,9 @@ Registry API endpoints:
 - `GET /servers/filters`
 - `GET /servers/<name>`
 - `GET /servers/<name>/downloads`
+- `GET /servers/<name>/community`
+- `POST /servers/<name>/star`
+- `POST /servers/<name>/report`
 
 Permission override formats:
 - `env:<VAR>` (example: `env:GITHUB_TOKEN`)

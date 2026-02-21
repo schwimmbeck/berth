@@ -979,26 +979,30 @@ fn render_site_detail_page(
     content.push_str("</form>");
     content.push_str("<p class=\"meta\" data-report-status></p>");
     content.push_str("<h3>Recent Reports</h3>");
-    if recent_reports.is_empty() {
-        content.push_str("<p class=\"meta\">No reports submitted.</p>");
+    let report_empty_style = if recent_reports.is_empty() {
+        ""
     } else {
-        content.push_str("<ul class=\"report-list\">");
-        for event in recent_reports {
-            let reason = html_escape(&event.reason);
-            let details = if event.details.trim().is_empty() {
-                "No details provided.".to_string()
-            } else {
-                html_escape(&event.details)
-            };
-            content.push_str("<li>");
-            content.push_str(&format!(
-                "<span class=\"meta\">reason {reason} · epoch {}</span><p>{details}</p>",
-                event.timestamp_epoch_secs
-            ));
-            content.push_str("</li>");
-        }
-        content.push_str("</ul>");
+        " style=\"display:none\""
+    };
+    content.push_str(&format!(
+        "<p class=\"meta\" data-report-empty{report_empty_style}>No reports submitted.</p>"
+    ));
+    content.push_str("<ul class=\"report-list\" data-report-list>");
+    for event in recent_reports {
+        let reason = html_escape(&event.reason);
+        let details = if event.details.trim().is_empty() {
+            "No details provided.".to_string()
+        } else {
+            html_escape(&event.details)
+        };
+        content.push_str("<li>");
+        content.push_str(&format!(
+            "<span class=\"meta\">reason {reason} · epoch {}</span><p>{details}</p>",
+            event.timestamp_epoch_secs
+        ));
+        content.push_str("</li>");
     }
+    content.push_str("</ul>");
     content.push_str("</section>");
 
     if !related_servers.is_empty() {
@@ -1311,6 +1315,41 @@ function applyCommunityCounts(payload) {
   }
 }
 
+function renderRecentReports(reports) {
+  const reportList = document.querySelector("[data-report-list]");
+  const reportEmpty = document.querySelector("[data-report-empty]");
+  if (!reportList || !reportEmpty) return;
+
+  reportList.innerHTML = "";
+  if (!Array.isArray(reports) || reports.length === 0) {
+    reportEmpty.style.display = "";
+    return;
+  }
+  reportEmpty.style.display = "none";
+
+  for (const report of reports) {
+    const listItem = document.createElement("li");
+    const meta = document.createElement("span");
+    meta.className = "meta";
+    const reason = typeof report?.reason === "string" && report.reason.trim()
+      ? report.reason.trim()
+      : "unspecified";
+    const epochValue = Number(report?.timestampEpochSecs);
+    const epoch = Number.isFinite(epochValue) ? Math.trunc(epochValue) : 0;
+    meta.textContent = `reason ${reason} · epoch ${epoch}`;
+
+    const detailsText = typeof report?.details === "string" && report.details.trim()
+      ? report.details.trim()
+      : "No details provided.";
+    const details = document.createElement("p");
+    details.textContent = detailsText;
+
+    listItem.appendChild(meta);
+    listItem.appendChild(details);
+    reportList.appendChild(listItem);
+  }
+}
+
 const starButton = document.querySelector("[data-star-server]");
 if (starButton) {
   starButton.addEventListener("click", async () => {
@@ -1357,6 +1396,15 @@ if (reportForm) {
       if (!response.ok) throw new Error();
       const payload = await response.json();
       applyCommunityCounts({ reports: payload.reports });
+      try {
+        const historyResponse = await fetch(
+          `/servers/${encodeURIComponent(server)}/reports?limit=5`
+        );
+        if (historyResponse.ok) {
+          const history = await historyResponse.json();
+          renderRecentReports(history.reports);
+        }
+      } catch (_) {}
       if (reportStatus) {
         reportStatus.textContent = "Report submitted";
       }
@@ -3286,6 +3334,19 @@ mod tests {
         assert!(detail.contains("Permissions"));
         assert!(detail.contains("Star this server"));
         assert!(detail.contains("Recent Reports"));
+        assert!(detail.contains("data-report-list"));
+
+        let report_req = HttpRequest {
+            method: "POST".to_string(),
+            target: "/servers/github/report".to_string(),
+            body: "{\"reason\":\"spam\",\"details\":\"broken output\"}".to_string(),
+        };
+        let (report_status, _) = route_request(&report_req, &registry, &state);
+        assert_eq!(report_status, 200);
+        let (detail_after_status, detail_after) =
+            route_website_request(&req("GET", "/site/servers/github"), &registry, &state).unwrap();
+        assert_eq!(detail_after_status, 200);
+        assert!(detail_after.contains("reason spam"));
 
         let (page_status, page_body) =
             route_website_request(&req("GET", "/site?limit=1&offset=1"), &registry, &state)

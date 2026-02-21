@@ -571,7 +571,7 @@ fn registry_api_serves_health_search_and_downloads() {
             "--bind",
             "127.0.0.1:0",
             "--max-requests",
-            "23",
+            "24",
         ])
         .stdout(Stdio::piped())
         .spawn()
@@ -624,6 +624,7 @@ fn registry_api_serves_health_search_and_downloads() {
     assert!(site_detail_body.contains("Permissions"));
     assert!(site_detail_body.contains("Star this server"));
     assert!(site_detail_body.contains("Recent Reports"));
+    assert!(site_detail_body.contains("data-report-list"));
 
     let (search_status, search_body) = http_get(&addr, "/servers?q=github");
     assert_eq!(search_status, 200);
@@ -728,6 +729,11 @@ fn registry_api_serves_health_search_and_downloads() {
     assert_eq!(reports["count"].as_u64(), Some(1));
     assert!(reports["total"].as_u64().unwrap_or(0) >= 1);
     assert_eq!(reports["reports"][0]["reason"].as_str(), Some("spam"));
+
+    let (site_detail_after_status, _site_detail_after_headers, site_detail_after_body) =
+        http_get_with_headers(&addr, "/site/servers/github");
+    assert_eq!(site_detail_after_status, 200);
+    assert!(site_detail_after_body.contains("reason spam"));
 
     let (trending_status, trending_body) = http_get(&addr, "/servers/trending?limit=5");
     assert_eq!(trending_status, 200);

@@ -458,6 +458,17 @@ fn route_request(request: &HttpRequest, registry: &Registry, state: &ApiState) -
             }
             route_server_filters(registry)
         }
+        "/stats" => {
+            if method != "GET" {
+                return (
+                    405,
+                    json!({
+                        "error": "method not allowed"
+                    }),
+                );
+            }
+            route_stats(query, registry, state)
+        }
         "/servers/trending" => {
             if method != "GET" {
                 return (
@@ -669,6 +680,145 @@ fn route_server_filters(registry: &Registry) -> (u16, Value) {
             "categories": categories.into_iter().collect::<Vec<_>>(),
             "platforms": platforms.into_iter().collect::<Vec<_>>(),
             "trustLevels": trust_levels.into_iter().collect::<Vec<_>>()
+        }),
+    )
+}
+
+fn route_stats(query: Option<&str>, registry: &Registry, state: &ApiState) -> (u16, Value) {
+    let top_limit = parse_usize_param(query, "top").unwrap_or(5).min(20);
+    let verified_publishers = state.list_verified_publishers().unwrap_or_default();
+
+    let mut categories = std::collections::BTreeMap::<String, u64>::new();
+    let mut trust_levels = std::collections::BTreeMap::<String, u64>::new();
+    let mut platforms = std::collections::BTreeMap::<String, u64>::new();
+    let mut maintainers = std::collections::BTreeMap::<String, u64>::new();
+    let mut stars_total = 0_u64;
+    let mut reports_total = 0_u64;
+    let mut downloads_total = 0_u64;
+    let mut top_downloaded = Vec::new();
+    let mut top_trending = Vec::new();
+
+    for server in registry.list_all() {
+        *categories.entry(server.category.clone()).or_insert(0) += 1;
+        *trust_levels
+            .entry(server.trust_level.to_string())
+            .or_insert(0) += 1;
+        for platform in &server.compatibility.platforms {
+            *platforms.entry(platform.clone()).or_insert(0) += 1;
+        }
+        *maintainers.entry(server.maintainer.clone()).or_insert(0) += 1;
+
+        let (stars, reports) = state.community_counts(&server.name).unwrap_or((0, 0));
+        stars_total += stars;
+        reports_total += reports;
+        downloads_total += server.quality.downloads;
+
+        let maintainer_verified = is_maintainer_verified(&server.maintainer, &verified_publishers);
+        let quality_score = server_quality_score(server, maintainer_verified, stars, reports);
+        let trend_score =
+            server_trending_score(server, quality_score, stars, reports, maintainer_verified);
+
+        top_downloaded.push((
+            server,
+            maintainer_verified,
+            quality_score,
+            server.quality.downloads,
+        ));
+        top_trending.push((
+            server,
+            maintainer_verified,
+            quality_score,
+            trend_score,
+            stars,
+            reports,
+        ));
+    }
+
+    top_downloaded.sort_by(|left, right| {
+        right
+            .3
+            .cmp(&left.3)
+            .then_with(|| left.0.name.cmp(&right.0.name))
+    });
+    top_trending.sort_by(|left, right| {
+        right
+            .3
+            .cmp(&left.3)
+            .then_with(|| left.0.name.cmp(&right.0.name))
+    });
+
+    let downloaded_servers = top_downloaded
+        .into_iter()
+        .take(top_limit)
+        .map(|(server, maintainer_verified, quality_score, downloads)| {
+            let mut summary = server_summary(server, maintainer_verified, quality_score);
+            if let Some(obj) = summary.as_object_mut() {
+                obj.insert("downloads".to_string(), json!(downloads));
+            }
+            summary
+        })
+        .collect::<Vec<_>>();
+
+    let trending_servers = top_trending
+        .into_iter()
+        .take(top_limit)
+        .map(
+            |(server, maintainer_verified, quality_score, trend_score, stars, reports)| {
+                let mut summary = server_summary(server, maintainer_verified, quality_score);
+                if let Some(obj) = summary.as_object_mut() {
+                    obj.insert("trendScore".to_string(), json!(trend_score));
+                    obj.insert("stars".to_string(), json!(stars));
+                    obj.insert("reports".to_string(), json!(reports));
+                }
+                summary
+            },
+        )
+        .collect::<Vec<_>>();
+
+    let mut maintainer_entries = maintainers
+        .into_iter()
+        .map(|(maintainer, servers)| {
+            let verified = is_maintainer_verified(&maintainer, &verified_publishers);
+            (maintainer, servers, verified)
+        })
+        .collect::<Vec<_>>();
+    maintainer_entries
+        .sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+
+    let top_maintainers = maintainer_entries
+        .into_iter()
+        .take(top_limit)
+        .map(|(maintainer, servers, verified)| {
+            json!({
+                "maintainer": maintainer,
+                "servers": servers,
+                "verified": verified
+            })
+        })
+        .collect::<Vec<_>>();
+
+    (
+        200,
+        json!({
+            "servers": {
+                "total": registry.list_all().len(),
+                "downloadsTotal": downloads_total
+            },
+            "community": {
+                "starsTotal": stars_total,
+                "reportsTotal": reports_total,
+                "verifiedPublishers": verified_publishers.len()
+            },
+            "breakdown": {
+                "categories": categories,
+                "trustLevels": trust_levels,
+                "platforms": platforms
+            },
+            "top": {
+                "downloaded": downloaded_servers,
+                "trending": trending_servers,
+                "maintainers": top_maintainers
+            }
         }),
     )
 }
@@ -1845,6 +1995,35 @@ mod tests {
             candidate["match"]["sharedTags"].is_array()
                 && candidate["match"]["sharedPlatforms"].is_array()
         }));
+    }
+
+    #[test]
+    fn route_request_supports_stats_endpoint() {
+        let registry = Registry::from_seed();
+        let state = test_state();
+
+        let _ = route_request(&req("POST", "/servers/github/star"), &registry, &state);
+        let _ = route_request(&req("POST", "/servers/github/report"), &registry, &state);
+
+        let (status, body) = route_request(&req("GET", "/stats?top=3"), &registry, &state);
+        assert_eq!(status, 200);
+        assert!(body["servers"]["total"].as_u64().unwrap_or(0) >= 1);
+        assert!(body["servers"]["downloadsTotal"].as_u64().unwrap_or(0) > 0);
+        assert!(body["community"]["starsTotal"].as_u64().unwrap_or(0) >= 1);
+        assert!(body["community"]["reportsTotal"].as_u64().unwrap_or(0) >= 1);
+
+        let downloaded = body["top"]["downloaded"].as_array().unwrap();
+        assert!(!downloaded.is_empty());
+        assert!(downloaded.len() <= 3);
+        if downloaded.len() >= 2 {
+            assert!(
+                downloaded[0]["downloads"].as_u64().unwrap_or(0)
+                    >= downloaded[1]["downloads"].as_u64().unwrap_or(0)
+            );
+        }
+
+        let maintainers = body["top"]["maintainers"].as_array().unwrap();
+        assert!(!maintainers.is_empty());
     }
 
     #[test]

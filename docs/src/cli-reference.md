@@ -52,6 +52,7 @@ Registry API endpoints:
 - `GET /servers` with optional `q|query`, `category`, `platform`, `trustLevel`, `offset`, `limit`, `sortBy`, `order`
 - `GET /servers/filters`
 - `GET /servers/trending` with optional `limit`, `offset`, `category`, `platform`, `trustLevel`
+- `GET /stats` with optional `top`
 - `GET /servers/<name>`
 - `GET /servers/<name>/related` with optional `limit`, `offset`
 - `GET /servers/<name>/downloads`

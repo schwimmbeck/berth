@@ -566,7 +566,7 @@ fn registry_api_serves_health_search_and_downloads() {
             "--bind",
             "127.0.0.1:0",
             "--max-requests",
-            "16",
+            "17",
         ])
         .stdout(Stdio::piped())
         .spawn()
@@ -677,6 +677,20 @@ fn registry_api_serves_health_search_and_downloads() {
         .find(|server| server["name"].as_str() == Some("github"))
         .unwrap();
     assert!(trending_github["trendScore"].as_u64().unwrap_or(0) > 0);
+
+    let (stats_status, stats_body) = http_get(&addr, "/stats?top=3");
+    assert_eq!(stats_status, 200);
+    let stats: serde_json::Value = serde_json::from_str(&stats_body).unwrap();
+    assert!(stats["servers"]["total"].as_u64().unwrap_or(0) >= 1);
+    assert!(stats["servers"]["downloadsTotal"].as_u64().unwrap_or(0) > 0);
+    let top_downloaded = stats["top"]["downloaded"].as_array().unwrap();
+    assert!(!top_downloaded.is_empty());
+    if top_downloaded.len() >= 2 {
+        assert!(
+            top_downloaded[0]["downloads"].as_u64().unwrap_or(0)
+                >= top_downloaded[1]["downloads"].as_u64().unwrap_or(0)
+        );
+    }
 
     let (options_status, options_headers, options_body) = http_options(&addr, "/servers");
     assert_eq!(options_status, 200);

@@ -108,6 +108,7 @@ Registry API endpoints:
 - `GET /servers?q=<query>&category=<category>&platform=<platform>&trustLevel=<level>&offset=<n>&limit=<n>&sortBy=<field>&order=<asc|desc>`
 - `GET /servers/filters`
 - `GET /servers/trending?limit=<n>&category=<category>&platform=<platform>&trustLevel=<level>`
+- `GET /stats?top=<n>`
 - `GET /servers/<name>`
 - `GET /servers/<name>/related?limit=<n>`
 - `GET /servers/<name>/downloads`

@@ -147,6 +147,25 @@ pub fn validate_network_permissions(
     Ok(())
 }
 
+/// Returns override-granted network permissions that are not declared by the server.
+pub fn undeclared_network_grants(
+    declared_network: &[String],
+    overrides: &PermissionOverrides,
+) -> Vec<String> {
+    let declared: BTreeSet<&str> = declared_network.iter().map(String::as_str).collect();
+    let mut out: BTreeSet<String> = BTreeSet::new();
+
+    for grant in &overrides.grant {
+        if let Some(value) = grant.strip_prefix("network:") {
+            if value == "*" || !declared.contains(value) {
+                out.insert(value.to_string());
+            }
+        }
+    }
+
+    out.into_iter().collect()
+}
+
 fn validate_env_permission(value: &str, original: &str) -> Result<(), String> {
     if value == "*" {
         return Ok(());
@@ -297,6 +316,24 @@ mod tests {
         let overrides = PermissionOverrides::default();
         let declared = vec!["api.github.com:443".to_string()];
         assert!(validate_network_permissions("github", &declared, &overrides).is_ok());
+    }
+
+    #[test]
+    fn undeclared_network_grants_identifies_extra_grants() {
+        let declared = vec!["api.github.com:443".to_string()];
+        let overrides = PermissionOverrides {
+            grant: vec![
+                "network:api.github.com:443".to_string(),
+                "network:example.com:443".to_string(),
+                "network:*".to_string(),
+            ],
+            revoke: vec![],
+        };
+        let undeclared = undeclared_network_grants(&declared, &overrides);
+        assert_eq!(
+            undeclared,
+            vec!["*".to_string(), "example.com:443".to_string()]
+        );
     }
 
     #[test]

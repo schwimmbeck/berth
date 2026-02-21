@@ -35,6 +35,7 @@ berth audit github --export audit.jsonl
 
 - launch and link flows apply effective env permissions
 - full network revocation blocks launch/proxy and is recorded in audit
+- undeclared network grants emit a warning and audit event (`permission-network-warning`)
 - audit data is stored as JSONL for deterministic parsing
 
 ## Behavior Examples

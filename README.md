@@ -116,6 +116,9 @@ Security behavior examples:
   - `berth start github` (blocked with exit code `1`)
 - Audit export for review:
   - `berth audit github --since 24h --json --export audit.json`
+- Undeclared network override warning (log-only):
+  - `berth permissions github --grant network:example.com:443`
+  - `berth start github` (prints warning and records `permission-network-warning`)
 
 ## Supported MCP Servers (seed registry)
 

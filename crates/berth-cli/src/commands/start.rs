@@ -12,8 +12,8 @@ use berth_runtime::{ProcessSpec, RuntimeManager, StartOutcome};
 
 use crate::paths;
 use crate::permission_filter::{
-    filter_env_map, load_permission_overrides, validate_network_permissions,
-    NETWORK_PERMISSION_DENIED_PREFIX,
+    filter_env_map, load_permission_overrides, undeclared_network_grants,
+    validate_network_permissions, NETWORK_PERMISSION_DENIED_PREFIX,
 };
 use crate::runtime_policy::parse_runtime_policy;
 use crate::sandbox_policy::{parse_sandbox_policy, KEY_SANDBOX_NETWORK};
@@ -70,7 +70,7 @@ pub fn execute(server: Option<&str>) {
             continue;
         }
 
-        let spec = match build_process_spec(name, &installed, &registry) {
+        let (spec, undeclared_network) = match build_process_spec(name, &installed, &registry) {
             Ok(spec) => spec,
             Err(msg) => {
                 if msg.starts_with(NETWORK_PERMISSION_DENIED_PREFIX) {
@@ -87,6 +87,21 @@ pub fn execute(server: Option<&str>) {
                 continue;
             }
         };
+        if !undeclared_network.is_empty() {
+            println!(
+                "{} {} has undeclared network grant override(s): {} (log-only).",
+                "!".yellow().bold(),
+                name.cyan(),
+                undeclared_network.join(", ")
+            );
+            let _ = runtime.record_audit_event(
+                name,
+                "permission-network-warning",
+                None,
+                Some(&installed.runtime.command),
+                Some(&installed.runtime.args),
+            );
+        }
         match runtime.start(name, &spec) {
             Ok(StartOutcome::Started) => {
                 println!("{} Started {}.", "✓".green().bold(), name.cyan());
@@ -237,7 +252,7 @@ fn build_process_spec(
     name: &str,
     installed: &InstalledServer,
     registry: &Registry,
-) -> Result<ProcessSpec, String> {
+) -> Result<(ProcessSpec, Vec<String>), String> {
     let mut env = BTreeMap::new();
 
     if let Some(meta) = registry.get(name) {
@@ -259,6 +274,7 @@ fn build_process_spec(
 
     let overrides = load_permission_overrides(name)?;
     validate_network_permissions(name, &installed.permissions.network, &overrides)?;
+    let undeclared_network = undeclared_network_grants(&installed.permissions.network, &overrides);
     let sandbox_policy = parse_sandbox_policy(&installed.config)?;
     if sandbox_policy.network_deny_all {
         return Err(format!(
@@ -275,12 +291,15 @@ fn build_process_spec(
         sandbox_policy,
     );
 
-    Ok(ProcessSpec {
-        command,
-        args,
-        env,
-        auto_restart: Some(policy),
-    })
+    Ok((
+        ProcessSpec {
+            command,
+            args,
+            env,
+            auto_restart: Some(policy),
+        },
+        undeclared_network,
+    ))
 }
 
 #[cfg(test)]

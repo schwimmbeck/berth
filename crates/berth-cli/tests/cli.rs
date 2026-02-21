@@ -849,6 +849,51 @@ fn proxy_sets_sandbox_env_when_basic_enabled() {
 }
 
 #[test]
+fn start_warns_on_undeclared_network_grant_and_audits() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "token=abc123"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args([
+            "permissions",
+            "github",
+            "--grant",
+            "network:example.com:443",
+        ])
+        .output()
+        .unwrap();
+    patch_runtime_to_long_running(tmp.path(), "github");
+
+    let start = berth_with_home(tmp.path())
+        .args(["start", "github"])
+        .output()
+        .unwrap();
+    assert!(start.status.success());
+    let stdout = String::from_utf8_lossy(&start.stdout);
+    assert!(stdout.contains("undeclared network grant override"));
+
+    let audit = berth_with_home(tmp.path())
+        .args(["audit", "github"])
+        .output()
+        .unwrap();
+    assert!(audit.status.success());
+    let audit_out = String::from_utf8_lossy(&audit.stdout);
+    assert!(audit_out.contains("permission-network-warning"));
+
+    let stop = berth_with_home(tmp.path())
+        .args(["stop", "github"])
+        .output()
+        .unwrap();
+    assert!(stop.status.success());
+}
+
+#[test]
 fn start_then_status_shows_running() {
     let tmp = tempfile::tempdir().unwrap();
     berth_with_home(tmp.path())

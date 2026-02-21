@@ -49,7 +49,7 @@ berth registry-api [--bind 127.0.0.1:8787] [--max-requests N]
 
 Registry API endpoints:
 - `GET /health`
-- `GET /servers` with optional `q|query`, `category`, `platform`, `trustLevel`, `offset`, `limit`
+- `GET /servers` with optional `q|query`, `category`, `platform`, `trustLevel`, `offset`, `limit`, `sortBy`, `order`
 - `GET /servers/filters`
 - `GET /servers/<name>`
 - `GET /servers/<name>/downloads`

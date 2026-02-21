@@ -63,6 +63,54 @@ struct HttpRequest {
     body: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SortBy {
+    Relevance,
+    Name,
+    Downloads,
+    Stars,
+    Reports,
+    QualityScore,
+}
+
+impl SortBy {
+    fn as_str(self) -> &'static str {
+        match self {
+            SortBy::Relevance => "relevance",
+            SortBy::Name => "name",
+            SortBy::Downloads => "downloads",
+            SortBy::Stars => "stars",
+            SortBy::Reports => "reports",
+            SortBy::QualityScore => "qualityScore",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SortOrder {
+    Asc,
+    Desc,
+}
+
+impl SortOrder {
+    fn as_str(self) -> &'static str {
+        match self {
+            SortOrder::Asc => "asc",
+            SortOrder::Desc => "desc",
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ListedServer<'a> {
+    server: &'a ServerMetadata,
+    search_score: Option<u32>,
+    maintainer_verified: bool,
+    stars: u64,
+    reports: u64,
+    quality_score: u32,
+}
+
 impl ApiState {
     fn new(community_dir: PathBuf) -> Self {
         Self { community_dir }
@@ -452,6 +500,30 @@ fn route_request(request: &HttpRequest, registry: &Registry, state: &ApiState) -
                 .filter(|v| !v.trim().is_empty());
             let offset = parse_usize_param(query, "offset").unwrap_or(0);
             let limit = parse_usize_param(query, "limit");
+            let sort_by = match parse_sort_by(query, query_value) {
+                Ok(sort_by) => sort_by,
+                Err(detail) => {
+                    return (
+                        400,
+                        json!({
+                            "error": "invalid sortBy",
+                            "detail": detail
+                        }),
+                    );
+                }
+            };
+            let sort_order = match parse_sort_order(query, sort_by) {
+                Ok(sort_order) => sort_order,
+                Err(detail) => {
+                    return (
+                        400,
+                        json!({
+                            "error": "invalid order",
+                            "detail": detail
+                        }),
+                    );
+                }
+            };
 
             let matches_filter = |server: &&berth_registry::types::ServerMetadata| {
                 matches_server_filters(server, category_filter, platform_filter, trust_filter)
@@ -480,25 +552,52 @@ fn route_request(request: &HttpRequest, registry: &Registry, state: &ApiState) -
                         })
                         .collect()
                 };
-            let total = entries.len();
+            let verified_publishers = state.list_verified_publishers().unwrap_or_default();
+            let mut listed = entries
+                .into_iter()
+                .map(|(server, score)| {
+                    let (stars, reports) = state.community_counts(&server.name).unwrap_or((0, 0));
+                    let maintainer_verified =
+                        is_maintainer_verified(&server.maintainer, &verified_publishers);
+                    let quality_score =
+                        server_quality_score(server, maintainer_verified, stars, reports);
+                    ListedServer {
+                        server,
+                        search_score: score,
+                        maintainer_verified,
+                        stars,
+                        reports,
+                        quality_score,
+                    }
+                })
+                .collect::<Vec<_>>();
+            listed.sort_by(|left, right| compare_listed_servers(left, right, sort_by, sort_order));
+            let total = listed.len();
             let sliced = if let Some(limit) = limit {
-                entries
+                listed
                     .into_iter()
                     .skip(offset)
                     .take(limit)
                     .collect::<Vec<_>>()
             } else {
-                entries.into_iter().skip(offset).collect::<Vec<_>>()
+                listed.into_iter().skip(offset).collect::<Vec<_>>()
             };
-            let verified_publishers = state.list_verified_publishers().unwrap_or_default();
             let servers = sliced
                 .into_iter()
-                .map(|(server, score)| {
-                    let mut summary = server_summary(server, &verified_publishers);
-                    if let Some(score) = score {
+                .map(|entry| {
+                    let mut summary = server_summary(
+                        entry.server,
+                        entry.maintainer_verified,
+                        entry.quality_score,
+                    );
+                    if let Some(score) = entry.search_score {
                         if let Some(obj) = summary.as_object_mut() {
                             obj.insert("score".to_string(), json!(score));
                         }
+                    }
+                    if let Some(obj) = summary.as_object_mut() {
+                        obj.insert("stars".to_string(), json!(entry.stars));
+                        obj.insert("reports".to_string(), json!(entry.reports));
                     }
                     summary
                 })
@@ -512,6 +611,10 @@ fn route_request(request: &HttpRequest, registry: &Registry, state: &ApiState) -
                         "category": category_filter,
                         "platform": platform_filter,
                         "trustLevel": trust_filter
+                    },
+                    "sort": {
+                        "by": sort_by.as_str(),
+                        "order": sort_order.as_str()
                     },
                     "total": total,
                     "count": count,
@@ -712,6 +815,106 @@ fn parse_usize_param(query: Option<&str>, key: &str) -> Option<usize> {
     query_param(query, key)
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|v| *v > 0)
+}
+
+/// Parses sort-by query parameter for `/servers`.
+fn parse_sort_by(query: Option<&str>, query_value: &str) -> Result<SortBy, String> {
+    let default = if query_value.trim().is_empty() {
+        SortBy::Name
+    } else {
+        SortBy::Relevance
+    };
+    let Some(raw) = query_param(query, "sortBy")
+        .or_else(|| query_param(query, "sort"))
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    else {
+        return Ok(default);
+    };
+
+    if raw.eq_ignore_ascii_case("relevance") {
+        Ok(SortBy::Relevance)
+    } else if raw.eq_ignore_ascii_case("name") {
+        Ok(SortBy::Name)
+    } else if raw.eq_ignore_ascii_case("downloads") {
+        Ok(SortBy::Downloads)
+    } else if raw.eq_ignore_ascii_case("stars") {
+        Ok(SortBy::Stars)
+    } else if raw.eq_ignore_ascii_case("reports") {
+        Ok(SortBy::Reports)
+    } else if raw.eq_ignore_ascii_case("qualityScore")
+        || raw.eq_ignore_ascii_case("quality_score")
+        || raw.eq_ignore_ascii_case("quality")
+    {
+        Ok(SortBy::QualityScore)
+    } else {
+        Err(format!(
+            "{raw}; supported values: relevance, name, downloads, stars, reports, qualityScore"
+        ))
+    }
+}
+
+/// Parses sort order query parameter for `/servers`.
+fn parse_sort_order(query: Option<&str>, sort_by: SortBy) -> Result<SortOrder, String> {
+    let default = if sort_by == SortBy::Relevance {
+        SortOrder::Desc
+    } else {
+        SortOrder::Asc
+    };
+    let Some(raw) = query_param(query, "order")
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    else {
+        return Ok(default);
+    };
+
+    if raw.eq_ignore_ascii_case("asc") {
+        Ok(SortOrder::Asc)
+    } else if raw.eq_ignore_ascii_case("desc") {
+        Ok(SortOrder::Desc)
+    } else {
+        Err(format!("{raw}; supported values: asc, desc"))
+    }
+}
+
+/// Compares list entries according to sort mode and order.
+fn compare_listed_servers(
+    left: &ListedServer<'_>,
+    right: &ListedServer<'_>,
+    sort_by: SortBy,
+    order: SortOrder,
+) -> std::cmp::Ordering {
+    let asc = match sort_by {
+        SortBy::Relevance => left
+            .search_score
+            .unwrap_or(0)
+            .cmp(&right.search_score.unwrap_or(0))
+            .then_with(|| left.server.name.cmp(&right.server.name)),
+        SortBy::Name => left.server.name.cmp(&right.server.name),
+        SortBy::Downloads => left
+            .server
+            .quality
+            .downloads
+            .cmp(&right.server.quality.downloads)
+            .then_with(|| left.server.name.cmp(&right.server.name)),
+        SortBy::Stars => left
+            .stars
+            .cmp(&right.stars)
+            .then_with(|| left.server.name.cmp(&right.server.name)),
+        SortBy::Reports => left
+            .reports
+            .cmp(&right.reports)
+            .then_with(|| left.server.name.cmp(&right.server.name)),
+        SortBy::QualityScore => left
+            .quality_score
+            .cmp(&right.quality_score)
+            .then_with(|| left.server.name.cmp(&right.server.name)),
+    };
+    if order == SortOrder::Asc {
+        asc
+    } else {
+        asc.reverse()
+    }
 }
 
 /// Routes `/servers/<name>` detail/community/star/report paths.
@@ -1101,11 +1304,10 @@ fn server_quality_score(
 /// Builds a compact API summary view for one registry server.
 fn server_summary(
     server: &berth_registry::types::ServerMetadata,
-    verified_publishers: &[String],
+    maintainer_verified: bool,
+    quality_score: u32,
 ) -> Value {
-    let maintainer_verified = is_maintainer_verified(&server.maintainer, verified_publishers);
     let badges = publisher_badges(maintainer_verified);
-    let quality_score = server_quality_score(server, maintainer_verified, 0, 0);
     json!({
         "name": server.name,
         "displayName": server.display_name,
@@ -1243,6 +1445,46 @@ mod tests {
         let first = &body["servers"][0];
         assert_eq!(first["category"].as_str(), Some("developer-tools"));
         assert_eq!(first["trustLevel"].as_str(), Some("official"));
+    }
+
+    #[test]
+    fn route_request_supports_sorting_with_metadata() {
+        let registry = Registry::from_seed();
+        let state = test_state();
+        let (status, body) = route_request(
+            &req("GET", "/servers?sortBy=name&order=asc&limit=5"),
+            &registry,
+            &state,
+        );
+        assert_eq!(status, 200);
+        assert_eq!(body["sort"]["by"].as_str(), Some("name"));
+        assert_eq!(body["sort"]["order"].as_str(), Some("asc"));
+
+        let names = body["servers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v["name"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>();
+        let mut expected = names.clone();
+        expected.sort();
+        assert_eq!(names, expected);
+    }
+
+    #[test]
+    fn route_request_rejects_invalid_sort_inputs() {
+        let registry = Registry::from_seed();
+        let state = test_state();
+
+        let (bad_sort_status, bad_sort_body) =
+            route_request(&req("GET", "/servers?sortBy=banana"), &registry, &state);
+        assert_eq!(bad_sort_status, 400);
+        assert_eq!(bad_sort_body["error"].as_str(), Some("invalid sortBy"));
+
+        let (bad_order_status, bad_order_body) =
+            route_request(&req("GET", "/servers?order=sideways"), &registry, &state);
+        assert_eq!(bad_order_status, 400);
+        assert_eq!(bad_order_body["error"].as_str(), Some("invalid order"));
     }
 
     #[test]

@@ -546,7 +546,7 @@ fn registry_api_serves_health_search_and_downloads() {
             "--bind",
             "127.0.0.1:0",
             "--max-requests",
-            "12",
+            "13",
         ])
         .stdout(Stdio::piped())
         .spawn()
@@ -600,6 +600,21 @@ fn registry_api_serves_health_search_and_downloads() {
         filtered["servers"][0]["trustLevel"].as_str(),
         Some("official")
     );
+
+    let (sorted_status, sorted_body) = http_get(&addr, "/servers?sortBy=name&order=asc&limit=3");
+    assert_eq!(sorted_status, 200);
+    let sorted: serde_json::Value = serde_json::from_str(&sorted_body).unwrap();
+    assert_eq!(sorted["sort"]["by"].as_str(), Some("name"));
+    assert_eq!(sorted["sort"]["order"].as_str(), Some("asc"));
+    let names = sorted["servers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["name"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    let mut expected = names.clone();
+    expected.sort();
+    assert_eq!(names, expected);
 
     let (downloads_status, downloads_body) = http_get(&addr, "/servers/github/downloads");
     assert_eq!(downloads_status, 200);

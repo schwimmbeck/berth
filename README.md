@@ -105,7 +105,7 @@ berth publish [manifest]       Validate + submit `berth.toml` to local review qu
 
 Registry API endpoints:
 - `GET /health`
-- `GET /servers?q=<query>&category=<category>&platform=<platform>&trustLevel=<level>&offset=<n>&limit=<n>`
+- `GET /servers?q=<query>&category=<category>&platform=<platform>&trustLevel=<level>&offset=<n>&limit=<n>&sortBy=<field>&order=<asc|desc>`
 - `GET /servers/filters`
 - `GET /servers/<name>`
 - `GET /servers/<name>/downloads`

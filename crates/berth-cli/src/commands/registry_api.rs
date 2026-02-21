@@ -132,6 +132,14 @@ struct SiteReportsUrlParams<'a> {
     offset: usize,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct SiteSubmissionsUrlParams<'a> {
+    status: Option<&'a str>,
+    server: Option<&'a str>,
+    limit: usize,
+    offset: usize,
+}
+
 #[derive(Debug, Deserialize)]
 struct QueueSubmissionFile {
     submitted_at_epoch_secs: u64,
@@ -631,7 +639,7 @@ fn now_epoch_secs() -> u64 {
         .as_secs()
 }
 
-/// Routes browser-facing local website paths (`/site`, `/site/reports`, `/site/servers/<name>`).
+/// Routes browser-facing local website paths (`/site`, `/site/reports`, `/site/submissions`, `/site/servers/<name>`).
 fn route_website_request(
     request: &HttpRequest,
     registry: &Registry,
@@ -649,6 +657,9 @@ fn route_website_request(
     match path {
         "/site" | "/site/" => Some((200, render_site_catalog_page(query, registry, state))),
         "/site/reports" | "/site/reports/" => Some((200, render_site_reports_page(query, state))),
+        "/site/submissions" | "/site/submissions/" => {
+            Some((200, render_site_submissions_page(query, state)))
+        }
         _ => {
             let Some(raw_name) = path.strip_prefix("/site/servers/") else {
                 return Some((404, render_site_not_found_page(path)));
@@ -965,6 +976,7 @@ fn render_site_catalog_page(query: Option<&str>, registry: &Registry, state: &Ap
         content.push_str("</ul>");
     }
     content.push_str("<p><a href=\"/site/reports\">Open moderation reports feed</a></p>");
+    content.push_str("<p><a href=\"/site/submissions\">Open publish review queue</a></p>");
     content.push_str("</section>");
 
     content.push_str("<section class=\"panel\">");
@@ -1156,6 +1168,155 @@ fn render_site_reports_page(query: Option<&str>, state: &ApiState) -> String {
     content.push_str("</section>");
 
     render_site_shell("Berth Registry Reports", &content)
+}
+
+/// Renders a publish-review queue page at `/site/submissions`.
+fn render_site_submissions_page(query: Option<&str>, state: &ApiState) -> String {
+    let status_filter = query_param(query, "status")
+        .map(url_decode)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let server_filter = query_param(query, "server")
+        .map(url_decode)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let limit = parse_usize_param(query, "limit")
+        .unwrap_or(25)
+        .clamp(1, 200);
+    let requested_offset = parse_usize_param(query, "offset").unwrap_or(0);
+
+    let mut submission_query_pairs = vec![
+        format!("limit={limit}"),
+        format!("offset={requested_offset}"),
+    ];
+    if let Some(status) = status_filter.as_deref() {
+        submission_query_pairs.push(format!("status={}", url_encode(status)));
+    }
+    if let Some(server) = server_filter.as_deref() {
+        submission_query_pairs.push(format!("server={}", url_encode(server)));
+    }
+    let submission_query = submission_query_pairs.join("&");
+    let (_status, payload) = route_publish_submissions(Some(&submission_query), state);
+
+    let total = payload["total"].as_u64().unwrap_or(0) as usize;
+    let offset = payload["offset"].as_u64().unwrap_or(0) as usize;
+    let limit = payload["limit"].as_u64().unwrap_or(limit as u64) as usize;
+    let count = payload["count"].as_u64().unwrap_or(0) as usize;
+    let showing_start = if count == 0 { 0 } else { offset + 1 };
+    let showing_end = offset + count;
+    let has_prev = offset > 0;
+    let has_next = showing_end < total;
+    let submissions = payload["submissions"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+
+    let prev_href = build_site_submissions_path(&SiteSubmissionsUrlParams {
+        status: status_filter.as_deref(),
+        server: server_filter.as_deref(),
+        limit,
+        offset: offset.saturating_sub(limit),
+    });
+    let next_href = build_site_submissions_path(&SiteSubmissionsUrlParams {
+        status: status_filter.as_deref(),
+        server: server_filter.as_deref(),
+        limit,
+        offset: offset.saturating_add(limit),
+    });
+
+    let mut content = String::new();
+    content.push_str("<header class=\"hero\">");
+    content.push_str("<p class=\"kicker\"><a href=\"/site\">Back to catalog</a></p>");
+    content.push_str("<h1>Publish Review Queue</h1>");
+    content.push_str(
+        "<p>Browse locally queued submissions produced by `berth publish` for manual review.</p>",
+    );
+    content.push_str("</header>");
+
+    content.push_str("<section class=\"panel\">");
+    content.push_str("<form class=\"filters\" method=\"GET\" action=\"/site/submissions\">");
+    content.push_str(
+        "<label>Status<input type=\"text\" name=\"status\" placeholder=\"pending-manual-review\" value=\"",
+    );
+    content.push_str(&html_escape(status_filter.as_deref().unwrap_or_default()));
+    content.push_str("\"></label>");
+    content.push_str(
+        "<label>Server<input type=\"text\" name=\"server\" placeholder=\"github\" value=\"",
+    );
+    content.push_str(&html_escape(server_filter.as_deref().unwrap_or_default()));
+    content.push_str("\"></label>");
+    content.push_str("<input type=\"hidden\" name=\"offset\" value=\"0\">");
+    content.push_str(
+        "<label>Limit<input type=\"number\" min=\"1\" max=\"200\" name=\"limit\" value=\"",
+    );
+    content.push_str(&limit.to_string());
+    content.push_str("\"></label>");
+    content.push_str("<button type=\"submit\">Apply</button>");
+    content.push_str("</form>");
+    content.push_str(&format!(
+        "<p class=\"summary\">Showing <strong>{showing_start}-{showing_end}</strong> of <strong>{total}</strong> submissions.</p>",
+    ));
+    content.push_str("<div class=\"pagination\">");
+    if has_prev {
+        content.push_str(&format!(
+            "<a href=\"{}\">Previous</a>",
+            html_escape(&prev_href)
+        ));
+    } else {
+        content.push_str("<span class=\"pagination-disabled\">Previous</span>");
+    }
+    if has_next {
+        content.push_str(&format!("<a href=\"{}\">Next</a>", html_escape(&next_href)));
+    } else {
+        content.push_str("<span class=\"pagination-disabled\">Next</span>");
+    }
+    content.push_str("</div>");
+    content.push_str("</section>");
+
+    content.push_str("<section class=\"panel\">");
+    content.push_str("<h2>Submissions</h2>");
+    if submissions.is_empty() {
+        content.push_str("<p class=\"empty\">No submissions matched the current filters.</p>");
+    } else {
+        content.push_str("<ul class=\"related-list\">");
+        for submission in submissions {
+            let id = submission["id"].as_str().unwrap_or_default();
+            let status = submission["status"].as_str().unwrap_or("unknown");
+            let epoch = submission["submittedAtEpochSecs"].as_u64().unwrap_or(0);
+            let quality_passed = submission["qualityChecksPassed"].as_u64().unwrap_or(0);
+            let quality_total = submission["qualityChecksTotal"].as_u64().unwrap_or(0);
+
+            let server_name = submission["server"]["name"].as_str().unwrap_or_default();
+            let server_display_name = submission["server"]["displayName"]
+                .as_str()
+                .unwrap_or(server_name);
+            let server_version = submission["server"]["version"].as_str().unwrap_or_default();
+            let server_maintainer = submission["server"]["maintainer"]
+                .as_str()
+                .unwrap_or_default();
+            let server_href = format!("/site/servers/{}", url_encode(server_name));
+
+            content.push_str("<li>");
+            content.push_str(&format!(
+                "<a href=\"{}\">{}</a> <span class=\"meta\">status {} · submitted {} · quality {}/{} · id {}</span><p>{} v{} · maintainer {}</p>",
+                html_escape(&server_href),
+                html_escape(server_display_name),
+                html_escape(status),
+                epoch,
+                quality_passed,
+                quality_total,
+                html_escape(id),
+                html_escape(server_name),
+                html_escape(server_version),
+                html_escape(server_maintainer)
+            ));
+            content.push_str("</li>");
+        }
+        content.push_str("</ul>");
+    }
+    content.push_str("</section>");
+
+    render_site_shell("Berth Registry Publish Queue", &content)
 }
 
 /// Renders a server detail page at `/site/servers/<name>`.
@@ -1804,6 +1965,26 @@ fn build_site_reports_path(params: &SiteReportsUrlParams<'_>) -> String {
         .collect::<Vec<_>>()
         .join("&");
     format!("/site/reports?{query}")
+}
+
+/// Builds a stable `/site/submissions` URL with current submission query parameters.
+fn build_site_submissions_path(params: &SiteSubmissionsUrlParams<'_>) -> String {
+    let mut pairs = Vec::new();
+    if let Some(status) = params.status.filter(|value| !value.trim().is_empty()) {
+        pairs.push(("status".to_string(), url_encode(status.trim())));
+    }
+    if let Some(server) = params.server.filter(|value| !value.trim().is_empty()) {
+        pairs.push(("server".to_string(), url_encode(server.trim())));
+    }
+    pairs.push(("limit".to_string(), params.limit.to_string()));
+    pairs.push(("offset".to_string(), params.offset.to_string()));
+
+    let query = pairs
+        .into_iter()
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect::<Vec<_>>()
+        .join("&");
+    format!("/site/submissions?{query}")
 }
 
 /// Renders one permissions section for detail pages.
@@ -3828,6 +4009,7 @@ mod tests {
         assert!(catalog.contains("Overview"));
         assert!(catalog.contains("Trending Right Now"));
         assert!(catalog.contains("/site/reports"));
+        assert!(catalog.contains("/site/submissions"));
 
         let (detail_status, detail) =
             route_website_request(&req("GET", "/site/servers/github"), &registry, &state).unwrap();
@@ -3861,6 +4043,24 @@ mod tests {
         assert!(reports_body.contains("Moderation Reports Feed"));
         assert!(reports_body.contains("/site/servers/github"));
         assert!(reports_body.contains("reason spam"));
+
+        seed_publish_submission(
+            &state,
+            "github-400.json",
+            400,
+            "pending-manual-review",
+            "github",
+        );
+        let (submissions_status, submissions_body) = route_website_request(
+            &req("GET", "/site/submissions?status=pending-manual-review"),
+            &registry,
+            &state,
+        )
+        .unwrap();
+        assert_eq!(submissions_status, 200);
+        assert!(submissions_body.contains("Publish Review Queue"));
+        assert!(submissions_body.contains("/site/servers/github"));
+        assert!(submissions_body.contains("pending-manual-review"));
 
         let (page_status, page_body) =
             route_website_request(&req("GET", "/site?limit=1&offset=1"), &registry, &state)
@@ -3931,6 +4131,21 @@ mod tests {
         assert!(path.contains("reason=unsafe%20output"));
         assert!(path.contains("limit=15"));
         assert!(path.contains("offset=30"));
+    }
+
+    #[test]
+    fn build_site_submissions_path_preserves_query_state() {
+        let path = build_site_submissions_path(&SiteSubmissionsUrlParams {
+            status: Some("pending manual review"),
+            server: Some("github"),
+            limit: 12,
+            offset: 24,
+        });
+        assert!(path.starts_with("/site/submissions?"));
+        assert!(path.contains("status=pending%20manual%20review"));
+        assert!(path.contains("server=github"));
+        assert!(path.contains("limit=12"));
+        assert!(path.contains("offset=24"));
     }
 
     #[test]

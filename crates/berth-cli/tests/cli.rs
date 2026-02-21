@@ -615,7 +615,7 @@ fn registry_api_serves_health_search_and_downloads() {
             "--bind",
             "127.0.0.1:0",
             "--max-requests",
-            "27",
+            "28",
         ])
         .stdout(Stdio::piped())
         .spawn()
@@ -651,6 +651,7 @@ fn registry_api_serves_health_search_and_downloads() {
     assert!(site_body.contains("copy-btn"));
     assert!(site_body.contains("Overview"));
     assert!(site_body.contains("Trending Right Now"));
+    assert!(site_body.contains("/site/submissions"));
 
     let (site_page_status, _site_page_headers, site_page_body) =
         http_get_with_headers(&addr, "/site?limit=1&offset=1");
@@ -810,6 +811,17 @@ fn registry_api_serves_health_search_and_downloads() {
     assert!(site_reports_body.contains("Moderation Reports Feed"));
     assert!(site_reports_body.contains("reason spam"));
     assert!(site_reports_body.contains("/site/servers/github"));
+
+    let (site_submissions_status, site_submissions_headers, site_submissions_body) =
+        http_get_with_headers(
+            &addr,
+            "/site/submissions?status=pending-manual-review&server=github",
+        );
+    assert_eq!(site_submissions_status, 200);
+    assert!(site_submissions_headers.contains("Content-Type: text/html; charset=utf-8"));
+    assert!(site_submissions_body.contains("Publish Review Queue"));
+    assert!(site_submissions_body.contains("/site/servers/github"));
+    assert!(site_submissions_body.contains("pending-manual-review"));
 
     let (site_detail_after_status, _site_detail_after_headers, site_detail_after_body) =
         http_get_with_headers(&addr, "/site/servers/github");

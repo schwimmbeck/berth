@@ -126,6 +126,7 @@ Registry API endpoints:
 - `POST /publishers/unverify`
 - `GET /site` (HTML catalog page with `q`, `category`, `platform`, `trustLevel`, `sortBy`, `order`, `limit`, `offset`)
 - `GET /site/reports` (HTML moderation feed with `server`, `reason`, `limit`, `offset`)
+- `GET /site/submissions` (HTML publish review queue with `status`, `server`, `limit`, `offset`)
 - `GET /site/servers/<name>` (HTML server detail page)
 - `OPTIONS <any-endpoint>` (browser preflight; CORS enabled)
 

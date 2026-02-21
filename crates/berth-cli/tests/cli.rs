@@ -571,7 +571,7 @@ fn registry_api_serves_health_search_and_downloads() {
             "--bind",
             "127.0.0.1:0",
             "--max-requests",
-            "25",
+            "26",
         ])
         .stdout(Stdio::piped())
         .spawn()
@@ -739,6 +739,14 @@ fn registry_api_serves_health_search_and_downloads() {
         global_reports["reports"][0]["server"].as_str(),
         Some("github")
     );
+
+    let (site_reports_status, site_reports_headers, site_reports_body) =
+        http_get_with_headers(&addr, "/site/reports?server=github");
+    assert_eq!(site_reports_status, 200);
+    assert!(site_reports_headers.contains("Content-Type: text/html; charset=utf-8"));
+    assert!(site_reports_body.contains("Moderation Reports Feed"));
+    assert!(site_reports_body.contains("reason spam"));
+    assert!(site_reports_body.contains("/site/servers/github"));
 
     let (site_detail_after_status, _site_detail_after_headers, site_detail_after_body) =
         http_get_with_headers(&addr, "/site/servers/github");

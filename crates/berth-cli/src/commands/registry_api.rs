@@ -123,6 +123,14 @@ struct SiteCatalogUrlParams<'a> {
     offset: usize,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct SiteReportsUrlParams<'a> {
+    server: Option<&'a str>,
+    reason: Option<&'a str>,
+    limit: usize,
+    offset: usize,
+}
+
 impl ApiState {
     fn new(community_dir: PathBuf) -> Self {
         Self { community_dir }
@@ -499,7 +507,7 @@ fn now_epoch_secs() -> u64 {
         .as_secs()
 }
 
-/// Routes browser-facing local website paths (`/site`, `/site/servers/<name>`).
+/// Routes browser-facing local website paths (`/site`, `/site/reports`, `/site/servers/<name>`).
 fn route_website_request(
     request: &HttpRequest,
     registry: &Registry,
@@ -516,6 +524,7 @@ fn route_website_request(
 
     match path {
         "/site" | "/site/" => Some((200, render_site_catalog_page(query, registry, state))),
+        "/site/reports" | "/site/reports/" => Some((200, render_site_reports_page(query, state))),
         _ => {
             let Some(raw_name) = path.strip_prefix("/site/servers/") else {
                 return Some((404, render_site_not_found_page(path)));
@@ -831,6 +840,7 @@ fn render_site_catalog_page(query: Option<&str>, registry: &Registry, state: &Ap
         }
         content.push_str("</ul>");
     }
+    content.push_str("<p><a href=\"/site/reports\">Open moderation reports feed</a></p>");
     content.push_str("</section>");
 
     content.push_str("<section class=\"panel\">");
@@ -888,6 +898,140 @@ fn render_site_catalog_page(query: Option<&str>, registry: &Registry, state: &Ap
     content.push_str("</section>");
 
     render_site_shell("Berth Registry Catalog", &content)
+}
+
+/// Renders a global moderation reports feed at `/site/reports`.
+fn render_site_reports_page(query: Option<&str>, state: &ApiState) -> String {
+    let server_filter = query_param(query, "server")
+        .map(url_decode)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let reason_filter = query_param(query, "reason")
+        .map(url_decode)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let limit = parse_usize_param(query, "limit")
+        .unwrap_or(25)
+        .clamp(1, 200);
+    let requested_offset = parse_usize_param(query, "offset").unwrap_or(0);
+
+    let mut report_query_pairs = vec![
+        format!("limit={limit}"),
+        format!("offset={requested_offset}"),
+    ];
+    if let Some(server) = server_filter.as_deref() {
+        report_query_pairs.push(format!("server={}", url_encode(server)));
+    }
+    if let Some(reason) = reason_filter.as_deref() {
+        report_query_pairs.push(format!("reason={}", url_encode(reason)));
+    }
+    let report_query = report_query_pairs.join("&");
+    let (_status, payload) = route_reports(Some(&report_query), state);
+
+    let total = payload["total"].as_u64().unwrap_or(0) as usize;
+    let offset = payload["offset"].as_u64().unwrap_or(0) as usize;
+    let limit = payload["limit"].as_u64().unwrap_or(limit as u64) as usize;
+    let count = payload["count"].as_u64().unwrap_or(0) as usize;
+    let showing_start = if count == 0 { 0 } else { offset + 1 };
+    let showing_end = offset + count;
+    let has_prev = offset > 0;
+    let has_next = showing_end < total;
+    let reports = payload["reports"].as_array().cloned().unwrap_or_default();
+
+    let prev_href = build_site_reports_path(&SiteReportsUrlParams {
+        server: server_filter.as_deref(),
+        reason: reason_filter.as_deref(),
+        limit,
+        offset: offset.saturating_sub(limit),
+    });
+    let next_href = build_site_reports_path(&SiteReportsUrlParams {
+        server: server_filter.as_deref(),
+        reason: reason_filter.as_deref(),
+        limit,
+        offset: offset.saturating_add(limit),
+    });
+
+    let mut content = String::new();
+    content.push_str("<header class=\"hero\">");
+    content.push_str("<p class=\"kicker\"><a href=\"/site\">Back to catalog</a></p>");
+    content.push_str("<h1>Moderation Reports Feed</h1>");
+    content.push_str(
+        "<p>Review recent community reports across all servers from your local registry state.</p>",
+    );
+    content.push_str("</header>");
+
+    content.push_str("<section class=\"panel\">");
+    content.push_str("<form class=\"filters\" method=\"GET\" action=\"/site/reports\">");
+    content.push_str(
+        "<label>Server<input type=\"text\" name=\"server\" placeholder=\"github\" value=\"",
+    );
+    content.push_str(&html_escape(server_filter.as_deref().unwrap_or_default()));
+    content.push_str("\"></label>");
+    content.push_str(
+        "<label>Reason<input type=\"text\" name=\"reason\" placeholder=\"spam\" value=\"",
+    );
+    content.push_str(&html_escape(reason_filter.as_deref().unwrap_or_default()));
+    content.push_str("\"></label>");
+    content.push_str("<input type=\"hidden\" name=\"offset\" value=\"0\">");
+    content.push_str(
+        "<label>Limit<input type=\"number\" min=\"1\" max=\"200\" name=\"limit\" value=\"",
+    );
+    content.push_str(&limit.to_string());
+    content.push_str("\"></label>");
+    content.push_str("<button type=\"submit\">Apply</button>");
+    content.push_str("</form>");
+    content.push_str(&format!(
+        "<p class=\"summary\">Showing <strong>{showing_start}-{showing_end}</strong> of <strong>{total}</strong> reports.</p>",
+    ));
+    content.push_str("<div class=\"pagination\">");
+    if has_prev {
+        content.push_str(&format!(
+            "<a href=\"{}\">Previous</a>",
+            html_escape(&prev_href)
+        ));
+    } else {
+        content.push_str("<span class=\"pagination-disabled\">Previous</span>");
+    }
+    if has_next {
+        content.push_str(&format!("<a href=\"{}\">Next</a>", html_escape(&next_href)));
+    } else {
+        content.push_str("<span class=\"pagination-disabled\">Next</span>");
+    }
+    content.push_str("</div>");
+    content.push_str("</section>");
+
+    content.push_str("<section class=\"panel\">");
+    content.push_str("<h2>Reports</h2>");
+    if reports.is_empty() {
+        content.push_str("<p class=\"empty\">No reports matched the current filters.</p>");
+    } else {
+        content.push_str("<ul class=\"report-list\">");
+        for report in reports {
+            let server = report["server"].as_str().unwrap_or_default();
+            let reason = report["reason"].as_str().unwrap_or("unspecified");
+            let details = report["details"]
+                .as_str()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("No details provided.");
+            let epoch = report["timestampEpochSecs"].as_u64().unwrap_or(0);
+            let server_href = format!("/site/servers/{}", url_encode(server));
+            content.push_str("<li>");
+            content.push_str(&format!(
+                "<span class=\"meta\"><a href=\"{}\">{}</a> · reason {} · epoch {}</span><p>{}</p>",
+                html_escape(&server_href),
+                html_escape(server),
+                html_escape(reason),
+                epoch,
+                html_escape(details)
+            ));
+            content.push_str("</li>");
+        }
+        content.push_str("</ul>");
+    }
+    content.push_str("</section>");
+
+    render_site_shell("Berth Registry Reports", &content)
 }
 
 /// Renders a server detail page at `/site/servers/<name>`.
@@ -1516,6 +1660,26 @@ fn build_site_catalog_path(params: &SiteCatalogUrlParams<'_>) -> String {
         .collect::<Vec<_>>()
         .join("&");
     format!("/site?{query}")
+}
+
+/// Builds a stable `/site/reports` URL with current report query parameters.
+fn build_site_reports_path(params: &SiteReportsUrlParams<'_>) -> String {
+    let mut pairs = Vec::new();
+    if let Some(server) = params.server.filter(|value| !value.trim().is_empty()) {
+        pairs.push(("server".to_string(), url_encode(server.trim())));
+    }
+    if let Some(reason) = params.reason.filter(|value| !value.trim().is_empty()) {
+        pairs.push(("reason".to_string(), url_encode(reason.trim())));
+    }
+    pairs.push(("limit".to_string(), params.limit.to_string()));
+    pairs.push(("offset".to_string(), params.offset.to_string()));
+
+    let query = pairs
+        .into_iter()
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect::<Vec<_>>()
+        .join("&");
+    format!("/site/reports?{query}")
 }
 
 /// Renders one permissions section for detail pages.
@@ -2150,13 +2314,13 @@ fn route_reports(query: Option<&str>, state: &ApiState) -> (u16, Value) {
     let limit = parse_usize_param(query, "limit").unwrap_or(50).min(200);
     let offset = parse_usize_param(query, "offset").unwrap_or(0);
     let server_filter = query_param(query, "server")
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| value.to_string());
+        .map(url_decode)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
     let reason_filter = query_param(query, "reason")
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| value.to_string());
+        .map(url_decode)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
 
     match state.list_all_reports() {
         Ok(mut reports) => {
@@ -3439,6 +3603,7 @@ mod tests {
         assert!(catalog.contains("page <strong>1</strong>"));
         assert!(catalog.contains("Overview"));
         assert!(catalog.contains("Trending Right Now"));
+        assert!(catalog.contains("/site/reports"));
 
         let (detail_status, detail) =
             route_website_request(&req("GET", "/site/servers/github"), &registry, &state).unwrap();
@@ -3461,6 +3626,17 @@ mod tests {
             route_website_request(&req("GET", "/site/servers/github"), &registry, &state).unwrap();
         assert_eq!(detail_after_status, 200);
         assert!(detail_after.contains("reason spam"));
+
+        let (reports_status, reports_body) = route_website_request(
+            &req("GET", "/site/reports?server=github"),
+            &registry,
+            &state,
+        )
+        .unwrap();
+        assert_eq!(reports_status, 200);
+        assert!(reports_body.contains("Moderation Reports Feed"));
+        assert!(reports_body.contains("/site/servers/github"));
+        assert!(reports_body.contains("reason spam"));
 
         let (page_status, page_body) =
             route_website_request(&req("GET", "/site?limit=1&offset=1"), &registry, &state)
@@ -3516,6 +3692,21 @@ mod tests {
         assert!(path.contains("order=desc"));
         assert!(path.contains("limit=20"));
         assert!(path.contains("offset=40"));
+    }
+
+    #[test]
+    fn build_site_reports_path_preserves_query_state() {
+        let path = build_site_reports_path(&SiteReportsUrlParams {
+            server: Some("google drive"),
+            reason: Some("unsafe output"),
+            limit: 15,
+            offset: 30,
+        });
+        assert!(path.starts_with("/site/reports?"));
+        assert!(path.contains("server=google%20drive"));
+        assert!(path.contains("reason=unsafe%20output"));
+        assert!(path.contains("limit=15"));
+        assert!(path.contains("offset=30"));
     }
 
     #[test]

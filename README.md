@@ -69,6 +69,7 @@ berth list
 | MCP permission management | Working | Inspect declared/effective permissions, enforce env overrides at launch/link time, and block launch when network is fully revoked |
 | MCP audit trail | Working | JSONL audit events for lifecycle actions with server/time filters |
 | AI client integration | Working | Auto-configure Claude Desktop, Cursor, Windsurf, Continue, and VS Code |
+| Registry API (local) | Working | Serve REST endpoints for health, search, server detail, and download counts from the current registry dataset |
 
 ## Commands
 
@@ -95,6 +96,7 @@ berth audit [server]           View/export runtime audit log (supports --since, 
 berth link <client>            Link Berth-managed servers to claude-desktop, cursor, windsurf, continue, or vscode
 berth unlink <client>          Unlink Berth-managed servers from claude-desktop, cursor, windsurf, continue, or vscode
 berth proxy <server>           Run as transparent MCP proxy
+berth registry-api             Serve local registry REST API (supports --bind and --max-requests)
 ```
 
 Permission override formats:

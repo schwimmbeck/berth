@@ -9,6 +9,7 @@ pub mod list;
 pub mod logs;
 pub mod permissions;
 pub mod proxy;
+pub mod registry_api;
 pub mod restart;
 pub mod search;
 pub mod start;
@@ -179,6 +180,17 @@ pub enum Commands {
         server: String,
     },
 
+    /// Serve local registry REST API endpoints
+    RegistryApi {
+        /// Bind address (host:port)
+        #[arg(long, default_value = "127.0.0.1:8787")]
+        bind: String,
+
+        /// Exit after serving this many requests (for tests/automation)
+        #[arg(long)]
+        max_requests: Option<u32>,
+    },
+
     /// Internal process supervisor loop (hidden).
     #[command(hide = true, name = "__supervise")]
     Supervise {
@@ -245,6 +257,7 @@ pub fn execute(command: Commands) {
         Commands::Link { client } => link::execute(&client),
         Commands::Unlink { client } => unlink::execute(&client),
         Commands::Proxy { server } => proxy::execute(&server),
+        Commands::RegistryApi { bind, max_requests } => registry_api::execute(&bind, max_requests),
         Commands::Supervise { server } => supervise::execute(&server),
     }
 }

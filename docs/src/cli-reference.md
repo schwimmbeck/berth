@@ -39,6 +39,12 @@ berth permissions <server>
 berth audit [server]
 ```
 
+Registry API command:
+
+```text
+berth registry-api [--bind 127.0.0.1:8787] [--max-requests N]
+```
+
 Client integration:
 
 ```text

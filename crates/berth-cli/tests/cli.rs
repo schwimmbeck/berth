@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
-use std::io::Write;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::TcpStream;
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
@@ -12,6 +13,26 @@ fn berth_with_home(tmp: &std::path::Path) -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_berth"));
     cmd.env("BERTH_HOME", tmp.join(".berth"));
     cmd
+}
+
+fn http_get(addr: &str, path: &str) -> (u16, String) {
+    let mut stream = TcpStream::connect(addr).unwrap();
+    let request = format!("GET {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n");
+    stream.write_all(request.as_bytes()).unwrap();
+
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    let first_line = response.lines().next().unwrap_or_default();
+    let status = first_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse::<u16>().ok())
+        .unwrap_or(0);
+    let body = response
+        .split_once("\r\n\r\n")
+        .map(|(_, b)| b.to_string())
+        .unwrap_or_default();
+    (status, body)
 }
 
 fn write_registry_override(path: &std::path::Path, servers: serde_json::Value) {
@@ -421,6 +442,54 @@ fn version_flag() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("0.1.0"));
+}
+
+#[test]
+fn registry_api_serves_health_search_and_downloads() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut child = berth_with_home(tmp.path())
+        .args([
+            "registry-api",
+            "--bind",
+            "127.0.0.1:0",
+            "--max-requests",
+            "3",
+        ])
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut ready_line = String::new();
+    {
+        let stdout = child.stdout.as_mut().unwrap();
+        let mut reader = BufReader::new(stdout);
+        reader.read_line(&mut ready_line).unwrap();
+    }
+    assert!(ready_line.contains("http://"));
+    let addr = ready_line
+        .trim()
+        .split("http://")
+        .nth(1)
+        .unwrap()
+        .to_string();
+
+    let (health_status, health_body) = http_get(&addr, "/health");
+    assert_eq!(health_status, 200);
+    let health: serde_json::Value = serde_json::from_str(&health_body).unwrap();
+    assert_eq!(health["status"].as_str(), Some("ok"));
+
+    let (search_status, search_body) = http_get(&addr, "/servers?q=github");
+    assert_eq!(search_status, 200);
+    let search: serde_json::Value = serde_json::from_str(&search_body).unwrap();
+    assert!(search["count"].as_u64().unwrap_or(0) >= 1);
+
+    let (downloads_status, downloads_body) = http_get(&addr, "/servers/github/downloads");
+    assert_eq!(downloads_status, 200);
+    let downloads: serde_json::Value = serde_json::from_str(&downloads_body).unwrap();
+    assert_eq!(downloads["server"].as_str(), Some("github"));
+
+    let status = child.wait().unwrap();
+    assert!(status.success());
 }
 
 // --- install ---

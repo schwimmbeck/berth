@@ -348,6 +348,9 @@ fn handle_connection(
 ) -> io::Result<()> {
     stream.set_read_timeout(Some(Duration::from_secs(2)))?;
     let request = read_http_request(stream)?;
+    if let Some((status, body)) = route_website_request(&request, registry, state) {
+        return write_html_response(stream, status, &body);
+    }
     let (status, body) = route_request(&request, registry, state);
     write_json_response(stream, status, &body)
 }
@@ -431,6 +434,703 @@ fn now_epoch_secs() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+/// Routes browser-facing local website paths (`/site`, `/site/servers/<name>`).
+fn route_website_request(
+    request: &HttpRequest,
+    registry: &Registry,
+    state: &ApiState,
+) -> Option<(u16, String)> {
+    let (path, query) = split_path_query(request.target.as_str());
+    if path != "/site" && path != "/site/" && !path.starts_with("/site/") {
+        return None;
+    }
+
+    if request.method != "GET" {
+        return Some((405, render_site_not_found_page("method not allowed")));
+    }
+
+    match path {
+        "/site" | "/site/" => Some((200, render_site_catalog_page(query, registry, state))),
+        _ => {
+            let Some(raw_name) = path.strip_prefix("/site/servers/") else {
+                return Some((404, render_site_not_found_page(path)));
+            };
+            if raw_name.is_empty() || raw_name.contains('/') {
+                return Some((404, render_site_not_found_page(path)));
+            }
+            let server_name = url_decode(raw_name);
+            Some(render_site_detail_page(&server_name, registry, state))
+        }
+    }
+}
+
+/// Renders the local catalog page backed by in-process registry data.
+fn render_site_catalog_page(query: Option<&str>, registry: &Registry, state: &ApiState) -> String {
+    let search_query = query_param(query, "q")
+        .or_else(|| query_param(query, "query"))
+        .map(url_decode)
+        .unwrap_or_default();
+    let search_query = search_query.trim().to_string();
+    let category_filter = query_param(query, "category")
+        .map(url_decode)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let platform_filter = query_param(query, "platform")
+        .map(url_decode)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let trust_filter = query_param(query, "trustLevel")
+        .or_else(|| query_param(query, "trust_level"))
+        .map(url_decode)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let default_sort_by = if search_query.is_empty() {
+        SortBy::Name
+    } else {
+        SortBy::Relevance
+    };
+    let sort_by = parse_sort_by(query, &search_query).unwrap_or(default_sort_by);
+    let default_sort_order = if sort_by == SortBy::Relevance {
+        SortOrder::Desc
+    } else {
+        SortOrder::Asc
+    };
+    let sort_order = parse_sort_order(query, sort_by).unwrap_or(default_sort_order);
+    let limit = parse_usize_param(query, "limit").unwrap_or(24).min(100);
+
+    let matches_filter = |server: &&ServerMetadata| {
+        matches_server_filters(
+            server,
+            category_filter.as_deref(),
+            platform_filter.as_deref(),
+            trust_filter.as_deref(),
+        )
+    };
+    let entries: Vec<(&ServerMetadata, Option<u32>)> = if search_query.is_empty() {
+        registry
+            .list_all()
+            .iter()
+            .filter(matches_filter)
+            .map(|server| (server, None))
+            .collect()
+    } else {
+        registry
+            .search(&search_query)
+            .into_iter()
+            .map(|result| (result.server, Some(result.score)))
+            .filter(|(server, _)| {
+                matches_server_filters(
+                    server,
+                    category_filter.as_deref(),
+                    platform_filter.as_deref(),
+                    trust_filter.as_deref(),
+                )
+            })
+            .collect()
+    };
+
+    let verified_publishers = state.list_verified_publishers().unwrap_or_default();
+    let mut listed = entries
+        .into_iter()
+        .map(|(server, score)| {
+            let (stars, reports) = state.community_counts(&server.name).unwrap_or((0, 0));
+            let maintainer_verified =
+                is_maintainer_verified(&server.maintainer, &verified_publishers);
+            let quality_score = server_quality_score(server, maintainer_verified, stars, reports);
+            ListedServer {
+                server,
+                search_score: score,
+                maintainer_verified,
+                stars,
+                reports,
+                quality_score,
+            }
+        })
+        .collect::<Vec<_>>();
+    listed.sort_by(|left, right| compare_listed_servers(left, right, sort_by, sort_order));
+    let total = listed.len();
+    let shown_servers = listed.into_iter().take(limit).collect::<Vec<_>>();
+
+    let mut categories = BTreeSet::new();
+    let mut platforms = BTreeSet::new();
+    let mut trust_levels = BTreeSet::new();
+    for server in registry.list_all() {
+        categories.insert(server.category.clone());
+        for platform in &server.compatibility.platforms {
+            platforms.insert(platform.clone());
+        }
+        trust_levels.insert(server.trust_level.to_string());
+    }
+
+    let mut cards = String::new();
+    if shown_servers.is_empty() {
+        cards.push_str("<p class=\"empty\">No servers matched your current filters.</p>");
+    } else {
+        for entry in shown_servers {
+            let name = html_escape(&entry.server.name);
+            let display_name = html_escape(&entry.server.display_name);
+            let description = html_escape(&entry.server.description);
+            let category = html_escape(&entry.server.category);
+            let trust_level = html_escape(&entry.server.trust_level.to_string());
+            let maintainer = html_escape(&entry.server.maintainer);
+            let install_command = format!("berth install {}", entry.server.name);
+            let install_display = html_escape(&install_command);
+            let verified_badge = if entry.maintainer_verified {
+                "<span class=\"badge badge-verified\">verified maintainer</span>"
+            } else {
+                ""
+            };
+            let related_link = format!("/site/servers/{name}");
+            cards.push_str("<article class=\"card\">");
+            cards.push_str(&format!(
+                "<h3><a href=\"{related_link}\">{display_name}</a></h3>"
+            ));
+            cards.push_str(&format!("<p class=\"description\">{description}</p>"));
+            cards.push_str("<p class=\"meta\">");
+            cards.push_str(&format!(
+                "<span>{category}</span><span>{trust_level}</span><span>quality {}</span>",
+                entry.quality_score
+            ));
+            cards.push_str("</p>");
+            cards.push_str("<p class=\"meta\">");
+            cards.push_str(&format!(
+                "<span>maintainer {maintainer}</span><span>downloads {}</span><span>stars {}</span><span>reports {}</span>{verified_badge}",
+                format_number(entry.server.quality.downloads),
+                entry.stars,
+                entry.reports
+            ));
+            cards.push_str("</p>");
+            cards.push_str("<div class=\"install-row\">");
+            cards.push_str(&format!("<code>{install_display}</code>"));
+            cards.push_str(&format!(
+                "<button class=\"copy-btn\" data-copy=\"{install_display}\">Copy</button>"
+            ));
+            cards.push_str("</div>");
+            cards.push_str("</article>");
+        }
+    }
+
+    let search_input = html_escape(&search_query);
+    let selected_category = category_filter.as_deref().unwrap_or_default();
+    let selected_platform = platform_filter.as_deref().unwrap_or_default();
+    let selected_trust = trust_filter.as_deref().unwrap_or_default();
+    let mut sort_options = String::new();
+    for (value, label) in [
+        ("relevance", "Relevance"),
+        ("name", "Name"),
+        ("downloads", "Downloads"),
+        ("stars", "Stars"),
+        ("reports", "Reports"),
+        ("qualityScore", "Quality"),
+    ] {
+        let selected = if sort_by.as_str() == value {
+            " selected"
+        } else {
+            ""
+        };
+        sort_options.push_str(&format!(
+            "<option value=\"{value}\"{selected}>{label}</option>"
+        ));
+    }
+    let mut order_options = String::new();
+    for (value, label) in [("asc", "Ascending"), ("desc", "Descending")] {
+        let selected = if sort_order.as_str() == value {
+            " selected"
+        } else {
+            ""
+        };
+        order_options.push_str(&format!(
+            "<option value=\"{value}\"{selected}>{label}</option>"
+        ));
+    }
+
+    let mut content = String::new();
+    content.push_str("<header class=\"hero\">");
+    content.push_str("<p class=\"kicker\">Berth Registry</p>");
+    content.push_str("<h1>Server Catalog</h1>");
+    content.push_str("<p>Browse MCP servers with quality, permission, and community signals from your local Berth registry API.</p>");
+    content.push_str("</header>");
+    content.push_str("<section class=\"panel\">");
+    content.push_str("<form class=\"filters\" method=\"GET\" action=\"/site\">");
+    content.push_str("<label>Query<input type=\"text\" name=\"q\" placeholder=\"github\" value=\"");
+    content.push_str(&search_input);
+    content.push_str("\"></label>");
+    content.push_str("<label>Category<select name=\"category\">");
+    content.push_str("<option value=\"\">All</option>");
+    content.push_str(&render_site_filter_options(&categories, selected_category));
+    content.push_str("</select></label>");
+    content.push_str("<label>Platform<select name=\"platform\">");
+    content.push_str("<option value=\"\">All</option>");
+    content.push_str(&render_site_filter_options(&platforms, selected_platform));
+    content.push_str("</select></label>");
+    content.push_str("<label>Trust<select name=\"trustLevel\">");
+    content.push_str("<option value=\"\">All</option>");
+    content.push_str(&render_site_filter_options(&trust_levels, selected_trust));
+    content.push_str("</select></label>");
+    content.push_str("<label>Sort<select name=\"sortBy\">");
+    content.push_str(&sort_options);
+    content.push_str("</select></label>");
+    content.push_str("<label>Order<select name=\"order\">");
+    content.push_str(&order_options);
+    content.push_str("</select></label>");
+    content.push_str(
+        "<label>Limit<input type=\"number\" min=\"1\" max=\"100\" name=\"limit\" value=\"",
+    );
+    content.push_str(&limit.to_string());
+    content.push_str("\"></label>");
+    content.push_str("<button type=\"submit\">Apply</button>");
+    content.push_str("</form>");
+    content.push_str(&format!(
+        "<p class=\"summary\">Showing <strong>{}</strong> of <strong>{}</strong> servers.</p>",
+        usize::min(limit, total),
+        total
+    ));
+    content.push_str("</section>");
+    content.push_str("<section class=\"catalog\">");
+    content.push_str(&cards);
+    content.push_str("</section>");
+
+    render_site_shell("Berth Registry Catalog", &content)
+}
+
+/// Renders a server detail page at `/site/servers/<name>`.
+fn render_site_detail_page(
+    server_name: &str,
+    registry: &Registry,
+    state: &ApiState,
+) -> (u16, String) {
+    let Some(server) = registry.get(server_name) else {
+        return (404, render_site_not_found_page(server_name));
+    };
+
+    let (stars, reports) = state.community_counts(&server.name).unwrap_or((0, 0));
+    let maintainer_verified = state
+        .is_publisher_verified(&server.maintainer)
+        .unwrap_or(false);
+    let quality_score = server_quality_score(server, maintainer_verified, stars, reports);
+    let install_command = format!("berth install {}", server.name);
+    let readme_url = readme_url_for_repository(&server.source.repository);
+    let permissions = permissions_summary(server);
+    let related = route_server_related(server, Some("limit=4"), registry, state);
+    let related_servers = if related.0 == 200 {
+        related.1["servers"].as_array().cloned().unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    let mut compatibility_clients = server.compatibility.clients.clone();
+    compatibility_clients.sort();
+    let mut compatibility_platforms = server.compatibility.platforms.clone();
+    compatibility_platforms.sort();
+
+    let mut content = String::new();
+    content.push_str("<header class=\"hero\">");
+    content.push_str("<p class=\"kicker\"><a href=\"/site\">Back to catalog</a></p>");
+    content.push_str(&format!("<h1>{}</h1>", html_escape(&server.display_name)));
+    content.push_str(&format!("<p>{}</p>", html_escape(&server.description)));
+    content.push_str("<p class=\"meta\">");
+    content.push_str(&format!(
+        "<span>{}</span><span>{}</span><span>maintainer {}</span><span>quality {quality_score}</span>",
+        html_escape(&server.category),
+        html_escape(&server.trust_level.to_string()),
+        html_escape(&server.maintainer)
+    ));
+    if maintainer_verified {
+        content.push_str("<span class=\"badge badge-verified\">verified maintainer</span>");
+    }
+    content.push_str("</p>");
+    content.push_str("</header>");
+
+    content.push_str("<section class=\"panel\">");
+    content.push_str("<h2>Install Command</h2>");
+    let install_display = html_escape(&install_command);
+    content.push_str("<div class=\"install-row\">");
+    content.push_str(&format!("<code>{install_display}</code>"));
+    content.push_str(&format!(
+        "<button class=\"copy-btn\" data-copy=\"{install_display}\">Copy</button>"
+    ));
+    content.push_str("</div>");
+    content.push_str("<p class=\"meta\">");
+    content.push_str(&format!(
+        "<span>downloads {}</span><span>stars {stars}</span><span>reports {reports}</span><span>version {}</span>",
+        format_number(server.quality.downloads),
+        html_escape(&server.version)
+    ));
+    content.push_str("</p>");
+    if let Some(readme_url) = readme_url {
+        let readme_url = html_escape(&readme_url);
+        content.push_str(&format!("<p><a href=\"{readme_url}\">Open README</a></p>"));
+    }
+    content.push_str("</section>");
+
+    content.push_str("<section class=\"panel detail-grid\">");
+    content.push_str("<div>");
+    content.push_str("<h2>Permissions</h2>");
+    content.push_str(&render_site_permissions_list(
+        "Network",
+        &server.permissions.network,
+    ));
+    content.push_str(&render_site_permissions_list(
+        "Env",
+        &server.permissions.env,
+    ));
+    content.push_str(&render_site_permissions_list(
+        "Filesystem",
+        &server.permissions.filesystem,
+    ));
+    content.push_str(&render_site_permissions_list(
+        "Exec",
+        &server.permissions.exec,
+    ));
+    content.push_str("</div>");
+    content.push_str("<div>");
+    content.push_str("<h2>Compatibility</h2>");
+    content.push_str("<p class=\"meta\"><strong>Clients:</strong> ");
+    content.push_str(&html_escape(&compatibility_clients.join(", ")));
+    content.push_str("</p>");
+    content.push_str("<p class=\"meta\"><strong>Platforms:</strong> ");
+    content.push_str(&html_escape(&compatibility_platforms.join(", ")));
+    content.push_str("</p>");
+    content.push_str("<h2>Security Summary</h2>");
+    content.push_str("<p class=\"meta\">");
+    content.push_str(&format!(
+        "<span>permissions {}</span><span>network wildcard {}</span><span>filesystem write {}</span>",
+        permissions["total"].as_u64().unwrap_or(0),
+        permissions["network"]["wildcard"].as_bool().unwrap_or(false),
+        permissions["filesystem"]["hasWriteAccess"]
+            .as_bool()
+            .unwrap_or(false)
+    ));
+    content.push_str("</p>");
+    content.push_str("</div>");
+    content.push_str("</section>");
+
+    if !related_servers.is_empty() {
+        content.push_str("<section class=\"panel\">");
+        content.push_str("<h2>Related Servers</h2>");
+        content.push_str("<ul class=\"related-list\">");
+        for server in related_servers {
+            let name = server["name"].as_str().unwrap_or_default();
+            if name.is_empty() {
+                continue;
+            }
+            let display_name = server["displayName"].as_str().unwrap_or(name);
+            let description = server["description"].as_str().unwrap_or_default();
+            let quality = server["qualityScore"].as_u64().unwrap_or(0);
+            let stars = server["stars"].as_u64().unwrap_or(0);
+            content.push_str("<li>");
+            content.push_str(&format!(
+                "<a href=\"/site/servers/{}\">{}</a> <span class=\"meta\">quality {} · stars {}</span><p>{}</p>",
+                html_escape(name),
+                html_escape(display_name),
+                quality,
+                stars,
+                html_escape(description)
+            ));
+            content.push_str("</li>");
+        }
+        content.push_str("</ul>");
+        content.push_str("</section>");
+    }
+
+    (200, render_site_shell("Berth Registry Detail", &content))
+}
+
+/// Renders a basic not-found page for website routes.
+fn render_site_not_found_page(path: &str) -> String {
+    let mut content = String::new();
+    content.push_str("<header class=\"hero\">");
+    content.push_str("<p class=\"kicker\">Berth Registry</p>");
+    content.push_str("<h1>Page Not Found</h1>");
+    content.push_str(&format!(
+        "<p>The requested path <code>{}</code> is not available.</p>",
+        html_escape(path)
+    ));
+    content.push_str("<p><a href=\"/site\">Open catalog</a></p>");
+    content.push_str("</header>");
+    render_site_shell("Not Found", &content)
+}
+
+/// Renders page shell with styles and shared copy-to-clipboard behavior.
+fn render_site_shell(title: &str, content: &str) -> String {
+    let mut page = String::new();
+    page.push_str("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">");
+    page.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
+    page.push_str("<title>");
+    page.push_str(&html_escape(title));
+    page.push_str("</title><style>");
+    page.push_str(
+        r#"
+:root {
+  --bg: #ecf4eb;
+  --surface: #ffffff;
+  --ink: #11281c;
+  --muted: #4a6256;
+  --accent: #0f7a45;
+  --accent-soft: #d6efdf;
+  --line: #c3d6c9;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: "Trebuchet MS", "Gill Sans", sans-serif;
+  color: var(--ink);
+  background: radial-gradient(circle at 20% 0%, #f9fff7 0, var(--bg) 40%, #d8e9da 100%);
+}
+a { color: #005f34; }
+.page { max-width: 1100px; margin: 0 auto; padding: 1.5rem 1rem 2rem; }
+.hero {
+  background: linear-gradient(140deg, #123422 0%, #0b5d34 50%, #28955f 100%);
+  color: #f3fff7;
+  border-radius: 14px;
+  padding: 1.2rem 1.25rem;
+  box-shadow: 0 16px 40px rgba(13, 58, 37, 0.25);
+}
+.hero h1 { margin: 0.2rem 0 0.5rem; }
+.hero p { margin: 0.2rem 0; }
+.hero a { color: #d8f9e4; }
+.kicker {
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  opacity: 0.9;
+}
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 1rem;
+  margin-top: 1rem;
+}
+.filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
+  gap: 0.75rem;
+  align-items: end;
+}
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.86rem;
+  color: var(--muted);
+}
+input, select, button {
+  font: inherit;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  padding: 0.5rem 0.6rem;
+}
+button {
+  border: none;
+  background: var(--accent);
+  color: #f4fff8;
+  cursor: pointer;
+  font-weight: 700;
+}
+button:hover { filter: brightness(1.06); }
+.summary { margin: 0.8rem 0 0; color: var(--muted); }
+.catalog {
+  margin-top: 1rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 0.85rem;
+}
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.9rem;
+  box-shadow: 0 6px 18px rgba(20, 47, 32, 0.08);
+}
+.card h3 { margin: 0 0 0.4rem; }
+.description { color: #1d3e2d; margin: 0 0 0.5rem; }
+.meta {
+  display: flex;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.1rem 0.45rem;
+  font-size: 0.73rem;
+  background: #edf2ff;
+}
+.badge-verified {
+  background: var(--accent-soft);
+  color: #0f5d34;
+}
+.install-row {
+  margin-top: 0.65rem;
+  display: flex;
+  gap: 0.55rem;
+  align-items: center;
+}
+code {
+  background: #f0f7ef;
+  border: 1px solid #d0e2d3;
+  border-radius: 8px;
+  padding: 0.32rem 0.45rem;
+  font-size: 0.82rem;
+  overflow-x: auto;
+}
+.copy-btn {
+  background: #165f3a;
+  white-space: nowrap;
+}
+.copy-btn.copied {
+  background: #0f8f50;
+}
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 0.9rem;
+}
+.perm-list { margin: 0 0 0.75rem; padding-left: 1rem; }
+.perm-list li { margin: 0.2rem 0; }
+.related-list { padding-left: 1rem; }
+.related-list li { margin: 0.7rem 0; }
+.empty {
+  padding: 1rem;
+  border-radius: 12px;
+  border: 1px dashed var(--line);
+  background: #f8fef6;
+}
+@media (max-width: 720px) {
+  .install-row { flex-direction: column; align-items: stretch; }
+  button { width: 100%; }
+}
+"#,
+    );
+    page.push_str("</style></head><body><main class=\"page\">");
+    page.push_str(content);
+    page.push_str("</main><script>");
+    page.push_str(
+        r#"
+for (const button of document.querySelectorAll(".copy-btn")) {
+  button.addEventListener("click", async () => {
+    const text = button.getAttribute("data-copy") || "";
+    try {
+      await navigator.clipboard.writeText(text);
+      const oldLabel = button.textContent;
+      button.textContent = "Copied";
+      button.classList.add("copied");
+      setTimeout(() => {
+        button.textContent = oldLabel;
+        button.classList.remove("copied");
+      }, 1100);
+    } catch (_) {
+      button.textContent = "Copy failed";
+    }
+  });
+}
+"#,
+    );
+    page.push_str("</script></body></html>");
+    page
+}
+
+/// Renders one filter select options block with selected-state support.
+fn render_site_filter_options(values: &BTreeSet<String>, selected: &str) -> String {
+    let mut out = String::new();
+    for value in values {
+        let selected_attr = if value.eq_ignore_ascii_case(selected) {
+            " selected"
+        } else {
+            ""
+        };
+        let escaped = html_escape(value);
+        out.push_str(&format!(
+            "<option value=\"{escaped}\"{selected_attr}>{escaped}</option>"
+        ));
+    }
+    out
+}
+
+/// Renders one permissions section for detail pages.
+fn render_site_permissions_list(title: &str, entries: &[String]) -> String {
+    let mut html = String::new();
+    html.push_str(&format!(
+        "<h3>{}</h3><ul class=\"perm-list\">",
+        html_escape(title)
+    ));
+    if entries.is_empty() {
+        html.push_str("<li><span class=\"meta\">none</span></li>");
+    } else {
+        for entry in entries {
+            html.push_str(&format!("<li><code>{}</code></li>", html_escape(entry)));
+        }
+    }
+    html.push_str("</ul>");
+    html
+}
+
+/// Formats integer counts with comma thousands separators.
+fn format_number(value: u64) -> String {
+    let text = value.to_string();
+    let mut reversed = String::new();
+    for (idx, ch) in text.chars().rev().enumerate() {
+        if idx > 0 && idx % 3 == 0 {
+            reversed.push(',');
+        }
+        reversed.push(ch);
+    }
+    reversed.chars().rev().collect()
+}
+
+/// Escapes text for safe interpolation into HTML text/attributes.
+fn html_escape(input: &str) -> String {
+    input
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
+/// Decodes basic URL-encoded query/path fragments for local website use.
+fn url_decode(input: &str) -> String {
+    fn hex_to_u8(ch: u8) -> Option<u8> {
+        match ch {
+            b'0'..=b'9' => Some(ch - b'0'),
+            b'a'..=b'f' => Some(ch - b'a' + 10),
+            b'A'..=b'F' => Some(ch - b'A' + 10),
+            _ => None,
+        }
+    }
+
+    let bytes = input.as_bytes();
+    let mut out = String::with_capacity(input.len());
+    let mut idx = 0;
+    while idx < bytes.len() {
+        match bytes[idx] {
+            b'+' => {
+                out.push(' ');
+                idx += 1;
+            }
+            b'%' if idx + 2 < bytes.len() => {
+                if let (Some(hi), Some(lo)) = (hex_to_u8(bytes[idx + 1]), hex_to_u8(bytes[idx + 2]))
+                {
+                    out.push((hi * 16 + lo) as char);
+                    idx += 3;
+                } else {
+                    out.push('%');
+                    idx += 1;
+                }
+            }
+            value => {
+                out.push(value as char);
+                idx += 1;
+            }
+        }
+    }
+    out
 }
 
 /// Routes a request to a status code and JSON response body.
@@ -2086,6 +2786,35 @@ fn server_summary(
 
 /// Writes a JSON HTTP response to a stream.
 fn write_json_response(stream: &mut TcpStream, status: u16, body: &Value) -> io::Result<()> {
+    let payload = serde_json::to_string(body)
+        .unwrap_or_else(|_| "{\"error\":\"serialization failed\"}".to_string());
+    write_http_response(
+        stream,
+        status,
+        "application/json",
+        &payload,
+        &[
+            ("Access-Control-Allow-Origin", "*"),
+            ("Access-Control-Allow-Methods", "GET, POST, OPTIONS"),
+            ("Access-Control-Allow-Headers", "Content-Type"),
+            ("Access-Control-Max-Age", "86400"),
+        ],
+    )
+}
+
+/// Writes an HTML HTTP response to a stream.
+fn write_html_response(stream: &mut TcpStream, status: u16, body: &str) -> io::Result<()> {
+    write_http_response(stream, status, "text/html; charset=utf-8", body, &[])
+}
+
+/// Writes an HTTP response body with explicit content type and optional extra headers.
+fn write_http_response(
+    stream: &mut TcpStream,
+    status: u16,
+    content_type: &str,
+    body: &str,
+    extra_headers: &[(&str, &str)],
+) -> io::Result<()> {
     let reason = match status {
         200 => "OK",
         400 => "Bad Request",
@@ -2093,13 +2822,19 @@ fn write_json_response(stream: &mut TcpStream, status: u16, body: &Value) -> io:
         405 => "Method Not Allowed",
         _ => "Internal Server Error",
     };
-    let payload = serde_json::to_string(body)
-        .unwrap_or_else(|_| "{\"error\":\"serialization failed\"}".to_string());
-    let response = format!(
-        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\nAccess-Control-Max-Age: 86400\r\nConnection: close\r\n\r\n{}",
-        payload.len(),
-        payload
+
+    let mut response = format!(
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n",
+        body.len()
     );
+    for (name, value) in extra_headers {
+        response.push_str(name);
+        response.push_str(": ");
+        response.push_str(value);
+        response.push_str("\r\n");
+    }
+    response.push_str("\r\n");
+    response.push_str(body);
     stream.write_all(response.as_bytes())
 }
 
@@ -2139,6 +2874,57 @@ mod tests {
     fn query_param_extracts_value() {
         let v = query_param(Some("q=github&limit=20"), "q");
         assert_eq!(v, Some("github"));
+    }
+
+    #[test]
+    fn route_website_request_renders_catalog_and_detail() {
+        let registry = Registry::from_seed();
+        let state = test_state();
+
+        let (catalog_status, catalog) = route_website_request(
+            &req(
+                "GET",
+                "/site?q=github&category=developer-tools&trustLevel=official",
+            ),
+            &registry,
+            &state,
+        )
+        .unwrap();
+        assert_eq!(catalog_status, 200);
+        assert!(catalog.contains("Server Catalog"));
+        assert!(catalog.contains("/site/servers/github"));
+        assert!(catalog.contains("copy-btn"));
+
+        let (detail_status, detail) =
+            route_website_request(&req("GET", "/site/servers/github"), &registry, &state).unwrap();
+        assert_eq!(detail_status, 200);
+        assert!(detail.contains("GitHub MCP Server"));
+        assert!(detail.contains("berth install github"));
+        assert!(detail.contains("Permissions"));
+    }
+
+    #[test]
+    fn route_website_request_handles_missing_and_invalid_routes() {
+        let registry = Registry::from_seed();
+        let state = test_state();
+
+        let (not_found_status, not_found_body) =
+            route_website_request(&req("GET", "/site/servers/nope"), &registry, &state).unwrap();
+        assert_eq!(not_found_status, 404);
+        assert!(not_found_body.contains("Page Not Found"));
+
+        let (method_status, method_body) =
+            route_website_request(&req("POST", "/site"), &registry, &state).unwrap();
+        assert_eq!(method_status, 405);
+        assert!(method_body.contains("method not allowed"));
+
+        assert!(route_website_request(&req("GET", "/servers"), &registry, &state).is_none());
+    }
+
+    #[test]
+    fn url_decode_translates_plus_and_percent_sequences() {
+        assert_eq!(url_decode("google+drive"), "google drive");
+        assert_eq!(url_decode("mcp%2Fgithub"), "mcp/github");
     }
 
     #[test]

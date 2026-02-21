@@ -70,6 +70,7 @@ berth list
 | MCP audit trail | Working | JSONL audit events for lifecycle actions with server/time filters |
 | AI client integration | Working | Auto-configure Claude Desktop, Cursor, Windsurf, Continue, and VS Code |
 | Registry API (local) | Working | Serve REST endpoints for health, search, server detail, and download counts from the current registry dataset |
+| Registry website (local) | Working | Browser UI at `/site` with catalog filters, server detail pages, and copy-ready install commands |
 | Registry publish workflow | Working | Validate `berth.toml`, run local quality checks, and enqueue submission artifacts for manual review |
 | Community signals (local API) | Working | Submit stars/reports and manage verified publisher badges with persisted local counters |
 
@@ -121,6 +122,8 @@ Registry API endpoints:
 - `GET /publishers/verified`
 - `POST /publishers/verify`
 - `POST /publishers/unverify`
+- `GET /site` (HTML catalog page with filters/sort)
+- `GET /site/servers/<name>` (HTML server detail page)
 - `OPTIONS <any-endpoint>` (browser preflight; CORS enabled)
 
 `GET /servers` and `GET /servers/<name>` include:

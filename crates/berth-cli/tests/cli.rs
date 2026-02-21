@@ -16,6 +16,11 @@ fn berth_with_home(tmp: &std::path::Path) -> Command {
 }
 
 fn http_get(addr: &str, path: &str) -> (u16, String) {
+    let (status, _headers, body) = http_get_with_headers(addr, path);
+    (status, body)
+}
+
+fn http_get_with_headers(addr: &str, path: &str) -> (u16, String, String) {
     let mut stream = TcpStream::connect(addr).unwrap();
     let request = format!("GET {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n");
     stream.write_all(request.as_bytes()).unwrap();
@@ -28,11 +33,11 @@ fn http_get(addr: &str, path: &str) -> (u16, String) {
         .nth(1)
         .and_then(|s| s.parse::<u16>().ok())
         .unwrap_or(0);
-    let body = response
+    let (headers, body) = response
         .split_once("\r\n\r\n")
-        .map(|(_, b)| b.to_string())
+        .map(|(h, b)| (h.to_string(), b.to_string()))
         .unwrap_or_default();
-    (status, body)
+    (status, headers, body)
 }
 
 fn http_post_json(addr: &str, path: &str, body: &str) -> (u16, String) {
@@ -566,7 +571,7 @@ fn registry_api_serves_health_search_and_downloads() {
             "--bind",
             "127.0.0.1:0",
             "--max-requests",
-            "20",
+            "22",
         ])
         .stdout(Stdio::piped())
         .spawn()
@@ -590,6 +595,24 @@ fn registry_api_serves_health_search_and_downloads() {
     assert_eq!(health_status, 200);
     let health: serde_json::Value = serde_json::from_str(&health_body).unwrap();
     assert_eq!(health["status"].as_str(), Some("ok"));
+
+    let (site_status, site_headers, site_body) = http_get_with_headers(
+        &addr,
+        "/site?q=github&category=developer-tools&trustLevel=official&sortBy=qualityScore&order=desc",
+    );
+    assert_eq!(site_status, 200);
+    assert!(site_headers.contains("Content-Type: text/html; charset=utf-8"));
+    assert!(site_body.contains("Server Catalog"));
+    assert!(site_body.contains("GitHub MCP Server"));
+    assert!(site_body.contains("copy-btn"));
+
+    let (site_detail_status, site_detail_headers, site_detail_body) =
+        http_get_with_headers(&addr, "/site/servers/github");
+    assert_eq!(site_detail_status, 200);
+    assert!(site_detail_headers.contains("Content-Type: text/html; charset=utf-8"));
+    assert!(site_detail_body.contains("Install Command"));
+    assert!(site_detail_body.contains("berth install github"));
+    assert!(site_detail_body.contains("Permissions"));
 
     let (search_status, search_body) = http_get(&addr, "/servers?q=github");
     assert_eq!(search_status, 200);

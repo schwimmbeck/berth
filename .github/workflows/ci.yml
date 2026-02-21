@@ -22,10 +22,20 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
+  audit:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-audit
+      - run: cargo audit
+
   test:
     name: Test
     runs-on: ubuntu-latest
-    needs: check
+    needs: [check, audit]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -35,7 +45,7 @@ jobs:
   build:
     name: Build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    needs: check
+    needs: [check, audit]
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]

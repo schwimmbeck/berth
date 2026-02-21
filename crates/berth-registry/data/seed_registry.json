@@ -220,5 +220,218 @@
     "tags": ["slack", "messaging", "channels", "team", "communication"],
     "maintainer": "Anthropic",
     "trustLevel": "official"
+  },
+  {
+    "name": "notion",
+    "displayName": "Notion MCP Server",
+    "description": "Read and update Notion pages and databases",
+    "version": "0.9.0",
+    "source": {
+      "type": "npm",
+      "package": "@modelcontextprotocol/server-notion",
+      "repository": "https://github.com/modelcontextprotocol/servers"
+    },
+    "runtime": {
+      "type": "node",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-notion"]
+    },
+    "transport": "stdio",
+    "permissions": {
+      "network": ["api.notion.com:443"],
+      "env": ["NOTION_TOKEN"],
+      "filesystem": [],
+      "exec": []
+    },
+    "config": {
+      "required": [
+        { "key": "token", "env": "NOTION_TOKEN", "description": "Notion integration token", "sensitive": true }
+      ],
+      "optional": []
+    },
+    "compatibility": {
+      "clients": ["claude-desktop", "cursor", "windsurf", "continue", "vscode", "generic"],
+      "platforms": ["macos", "linux", "windows"]
+    },
+    "quality": {
+      "securityScan": "pass",
+      "healthCheck": true,
+      "lastVerified": "2026-02-19",
+      "downloads": 9020
+    },
+    "category": "productivity",
+    "tags": ["notion", "notes", "database", "workspace"],
+    "maintainer": "Community",
+    "trustLevel": "community"
+  },
+  {
+    "name": "google-drive",
+    "displayName": "Google Drive MCP Server",
+    "description": "Access files and folders from Google Drive",
+    "version": "0.8.2",
+    "source": {
+      "type": "npm",
+      "package": "@modelcontextprotocol/server-google-drive",
+      "repository": "https://github.com/modelcontextprotocol/servers"
+    },
+    "runtime": {
+      "type": "node",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-google-drive"]
+    },
+    "transport": "stdio",
+    "permissions": {
+      "network": ["www.googleapis.com:443"],
+      "env": ["GOOGLE_OAUTH_TOKEN"],
+      "filesystem": [],
+      "exec": []
+    },
+    "config": {
+      "required": [
+        { "key": "oauth-token", "env": "GOOGLE_OAUTH_TOKEN", "description": "Google OAuth access token", "sensitive": true }
+      ],
+      "optional": []
+    },
+    "compatibility": {
+      "clients": ["claude-desktop", "cursor", "windsurf", "continue", "vscode", "generic"],
+      "platforms": ["macos", "linux", "windows"]
+    },
+    "quality": {
+      "securityScan": "pass",
+      "healthCheck": true,
+      "lastVerified": "2026-02-19",
+      "downloads": 7660
+    },
+    "category": "productivity",
+    "tags": ["google-drive", "files", "storage", "cloud"],
+    "maintainer": "Community",
+    "trustLevel": "community"
+  },
+  {
+    "name": "sqlite",
+    "displayName": "SQLite MCP Server",
+    "description": "Query local SQLite databases",
+    "version": "0.7.1",
+    "source": {
+      "type": "npm",
+      "package": "@modelcontextprotocol/server-sqlite",
+      "repository": "https://github.com/modelcontextprotocol/servers"
+    },
+    "runtime": {
+      "type": "node",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sqlite"]
+    },
+    "transport": "stdio",
+    "permissions": {
+      "network": [],
+      "env": [],
+      "filesystem": ["read:/workspace", "write:/tmp"],
+      "exec": []
+    },
+    "config": {
+      "required": [
+        { "key": "database-path", "description": "Path to SQLite database file", "sensitive": false }
+      ],
+      "optional": []
+    },
+    "compatibility": {
+      "clients": ["claude-desktop", "cursor", "windsurf", "continue", "vscode", "generic"],
+      "platforms": ["macos", "linux", "windows"]
+    },
+    "quality": {
+      "securityScan": "pass",
+      "healthCheck": true,
+      "lastVerified": "2026-02-19",
+      "downloads": 6930
+    },
+    "category": "databases",
+    "tags": ["sqlite", "database", "sql", "local"],
+    "maintainer": "Community",
+    "trustLevel": "community"
+  },
+  {
+    "name": "fetch",
+    "displayName": "Fetch MCP Server",
+    "description": "Fetch HTTP resources for tool workflows",
+    "version": "0.8.0",
+    "source": {
+      "type": "npm",
+      "package": "@modelcontextprotocol/server-fetch",
+      "repository": "https://github.com/modelcontextprotocol/servers"
+    },
+    "runtime": {
+      "type": "node",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-fetch"]
+    },
+    "transport": "stdio",
+    "permissions": {
+      "network": ["*:443"],
+      "env": [],
+      "filesystem": [],
+      "exec": []
+    },
+    "config": {
+      "required": [],
+      "optional": []
+    },
+    "compatibility": {
+      "clients": ["claude-desktop", "cursor", "windsurf", "continue", "vscode", "generic"],
+      "platforms": ["macos", "linux", "windows"]
+    },
+    "quality": {
+      "securityScan": "pass",
+      "healthCheck": true,
+      "lastVerified": "2026-02-19",
+      "downloads": 11840
+    },
+    "category": "search",
+    "tags": ["fetch", "http", "web", "api"],
+    "maintainer": "Community",
+    "trustLevel": "community"
+  },
+  {
+    "name": "memory",
+    "displayName": "Memory MCP Server",
+    "description": "Store and retrieve structured memory for assistants",
+    "version": "0.6.4",
+    "source": {
+      "type": "npm",
+      "package": "@modelcontextprotocol/server-memory",
+      "repository": "https://github.com/modelcontextprotocol/servers"
+    },
+    "runtime": {
+      "type": "node",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-memory"]
+    },
+    "transport": "stdio",
+    "permissions": {
+      "network": [],
+      "env": [],
+      "filesystem": ["read:/workspace", "write:/workspace"],
+      "exec": []
+    },
+    "config": {
+      "required": [],
+      "optional": [
+        { "key": "storage-dir", "description": "Directory for persisted memory files", "default": ".berth-memory" }
+      ]
+    },
+    "compatibility": {
+      "clients": ["claude-desktop", "cursor", "windsurf", "continue", "vscode", "generic"],
+      "platforms": ["macos", "linux", "windows"]
+    },
+    "quality": {
+      "securityScan": "pass",
+      "healthCheck": true,
+      "lastVerified": "2026-02-19",
+      "downloads": 8420
+    },
+    "category": "developer-tools",
+    "tags": ["memory", "state", "storage", "assistant"],
+    "maintainer": "Community",
+    "trustLevel": "community"
   }
 ]

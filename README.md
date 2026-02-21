@@ -141,6 +141,11 @@ Berth ships with a built-in registry of popular MCP servers:
 | `brave-search` | Web and local search via Brave Search API | Search |
 | `postgres` | Read-only PostgreSQL database access with schema inspection | Databases |
 | `slack` | Access Slack workspaces, channels, messages, and users | Communication |
+| `notion` | Read and update Notion pages and databases | Productivity |
+| `google-drive` | Access files and folders from Google Drive | Productivity |
+| `sqlite` | Query local SQLite databases | Databases |
+| `fetch` | Fetch HTTP resources for tool workflows | Search |
+| `memory` | Store and retrieve structured memory for assistants | Developer Tools |
 
 More MCP servers will be added as the registry grows.
 

@@ -16,7 +16,7 @@ mod tests {
     #[test]
     fn seed_registry_parses() {
         let servers = load_seed_registry();
-        assert_eq!(servers.len(), 5);
+        assert_eq!(servers.len(), 10);
     }
 
     #[test]
@@ -28,5 +28,10 @@ mod tests {
         assert!(names.contains(&"brave-search"));
         assert!(names.contains(&"postgres"));
         assert!(names.contains(&"slack"));
+        assert!(names.contains(&"notion"));
+        assert!(names.contains(&"google-drive"));
+        assert!(names.contains(&"sqlite"));
+        assert!(names.contains(&"fetch"));
+        assert!(names.contains(&"memory"));
     }
 }

@@ -80,6 +80,7 @@ berth info <server>            Show detailed MCP server info
 berth list                     List installed MCP servers
 
 berth install <server[@version]> Install an MCP server
+berth import-github <owner/repo> Auto-import server from GitHub `berth.toml` (`--ref`, `--manifest-path`, `--dry-run`)
 berth uninstall <server>       Remove an MCP server
 berth update <server|--all>    Update MCP servers
 berth config <server>          Configure an MCP server (`--set`, `--secure`, `--env`, or `--interactive`)

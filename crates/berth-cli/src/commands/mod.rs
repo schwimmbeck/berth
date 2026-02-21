@@ -2,6 +2,7 @@
 
 pub mod audit;
 pub mod config;
+pub mod import_github;
 pub mod info;
 pub mod install;
 pub mod link;
@@ -45,6 +46,24 @@ pub enum Commands {
     Install {
         /// Server name (optionally with @version)
         server: String,
+    },
+
+    /// Auto-import an MCP server from a GitHub repo containing `berth.toml`
+    ImportGithub {
+        /// GitHub repo (`owner/repo` or GitHub URL)
+        repo: String,
+
+        /// Git ref to read from
+        #[arg(long = "ref", default_value = "main")]
+        git_ref: String,
+
+        /// Manifest path in the repository
+        #[arg(long, default_value = "berth.toml")]
+        manifest_path: String,
+
+        /// Validate only; do not write local server config
+        #[arg(long)]
+        dry_run: bool,
     },
 
     /// Uninstall an MCP server
@@ -217,6 +236,12 @@ pub fn execute(command: Commands) {
         Commands::Info { server } => info::execute(&server),
         Commands::List => list::execute(),
         Commands::Install { server } => install::execute(&server),
+        Commands::ImportGithub {
+            repo,
+            git_ref,
+            manifest_path,
+            dry_run,
+        } => import_github::execute(&repo, &git_ref, &manifest_path, dry_run),
         Commands::Uninstall { server } => uninstall::execute(&server),
         Commands::Update { server, all } => update::execute(server.as_deref(), all),
         Commands::Config {

@@ -92,6 +92,23 @@ default = "https://api.github.com"
     std::fs::write(path, manifest.trim_start()).unwrap();
 }
 
+fn write_github_raw_manifest(
+    raw_base: &std::path::Path,
+    repo: &str,
+    git_ref: &str,
+    manifest_rel_path: &str,
+) -> std::path::PathBuf {
+    let (owner, name) = repo.split_once('/').unwrap();
+    let path = raw_base
+        .join(owner)
+        .join(name)
+        .join(git_ref)
+        .join(manifest_rel_path);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    write_publish_manifest(&path);
+    path
+}
+
 fn patch_runtime_to_long_running(tmp: &std::path::Path, server: &str) {
     let config_path = tmp.join(".berth/servers").join(format!("{server}.toml"));
     let content = std::fs::read_to_string(&config_path).unwrap();
@@ -649,6 +666,78 @@ fn publish_writes_submission_queue_entry() {
         Some("acme-github")
     );
     assert_eq!(submission["status"].as_str(), Some("pending-manual-review"));
+}
+
+#[test]
+fn import_github_dry_run_valid_manifest_succeeds() {
+    let tmp = tempfile::tempdir().unwrap();
+    let raw_base = tmp.path().join("raw");
+    write_github_raw_manifest(&raw_base, "acme/mcp-demo", "main", "berth.toml");
+
+    let output = berth_with_home(tmp.path())
+        .current_dir(tmp.path())
+        .env(
+            "BERTH_GITHUB_RAW_BASE",
+            format!("file://{}", raw_base.display()),
+        )
+        .args(["import-github", "acme/mcp-demo", "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Valid GitHub manifest"));
+    assert!(!tmp.path().join(".berth/servers/acme-github.toml").exists());
+}
+
+#[test]
+fn import_github_writes_server_config() {
+    let tmp = tempfile::tempdir().unwrap();
+    let raw_base = tmp.path().join("raw");
+    write_github_raw_manifest(&raw_base, "acme/mcp-demo", "main", "berth.toml");
+
+    let output = berth_with_home(tmp.path())
+        .current_dir(tmp.path())
+        .env(
+            "BERTH_GITHUB_RAW_BASE",
+            format!("file://{}", raw_base.display()),
+        )
+        .args(["import-github", "https://github.com/acme/mcp-demo"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Imported"));
+
+    let config_path = tmp.path().join(".berth/servers/acme-github.toml");
+    assert!(config_path.exists());
+    let config = std::fs::read_to_string(config_path).unwrap();
+    assert!(config.contains("acme-github"));
+    assert!(config.contains("https://github.com/acme/mcp-github"));
+}
+
+#[test]
+fn import_github_invalid_manifest_exits_1() {
+    let tmp = tempfile::tempdir().unwrap();
+    let raw_base = tmp.path().join("raw");
+    let path = write_github_raw_manifest(&raw_base, "acme/mcp-demo", "main", "berth.toml");
+    let bad = std::fs::read_to_string(&path)
+        .unwrap()
+        .replace("transport = \"stdio\"", "transport = \"http\"")
+        .replace("env = [\"GITHUB_TOKEN\"]", "env = [\"bad-var\"]");
+    std::fs::write(path, bad).unwrap();
+
+    let output = berth_with_home(tmp.path())
+        .current_dir(tmp.path())
+        .env(
+            "BERTH_GITHUB_RAW_BASE",
+            format!("file://{}", raw_base.display()),
+        )
+        .args(["import-github", "acme/mcp-demo"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Manifest validation failed"));
 }
 
 // --- install ---

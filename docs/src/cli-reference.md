@@ -7,6 +7,7 @@ berth search <query>
 berth info <server>
 berth list
 berth install <server[@version]>
+berth import-github <owner/repo>
 berth uninstall <server>
 berth update <server|--all>
 berth publish [manifest]

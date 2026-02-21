@@ -20,6 +20,7 @@ use crate::sandbox_policy::{
     is_sandbox_policy_key, parse_sandbox_policy, validate_sandbox_policy_value, KEY_SANDBOX,
     KEY_SANDBOX_NETWORK,
 };
+use crate::secrets::store_secret;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -29,15 +30,23 @@ struct ConfigBundle {
 }
 
 /// Executes the `berth config` command.
-pub fn execute(server: &str, path: Option<&str>, set: Option<&str>, env: bool, interactive: bool) {
+pub fn execute(
+    server: &str,
+    path: Option<&str>,
+    set: Option<&str>,
+    secure: bool,
+    env: bool,
+    interactive: bool,
+) {
     if server == "export" {
-        if set.is_some() || env || interactive {
+        if set.is_some() || env || interactive || secure {
             eprintln!(
-                "{} `config export` does not support {}, {}, or {}.",
+                "{} `config export` does not support {}, {}, {}, or {}.",
                 "✗".red().bold(),
                 "--set".bold(),
                 "--env".bold(),
-                "--interactive".bold()
+                "--interactive".bold(),
+                "--secure".bold()
             );
             process::exit(1);
         }
@@ -46,13 +55,14 @@ pub fn execute(server: &str, path: Option<&str>, set: Option<&str>, env: bool, i
     }
 
     if server == "import" {
-        if set.is_some() || env || interactive {
+        if set.is_some() || env || interactive || secure {
             eprintln!(
-                "{} `config import` does not support {}, {}, or {}.",
+                "{} `config import` does not support {}, {}, {}, or {}.",
                 "✗".red().bold(),
                 "--set".bold(),
                 "--env".bold(),
-                "--interactive".bold()
+                "--interactive".bold(),
+                "--secure".bold()
             );
             process::exit(1);
         }
@@ -110,6 +120,15 @@ pub fn execute(server: &str, path: Option<&str>, set: Option<&str>, env: bool, i
             );
             process::exit(1);
         }
+        if secure {
+            eprintln!(
+                "{} {} requires {}.",
+                "✗".red().bold(),
+                "--secure".bold(),
+                "--set".bold()
+            );
+            process::exit(1);
+        }
         show_env(server);
         return;
     }
@@ -124,8 +143,18 @@ pub fn execute(server: &str, path: Option<&str>, set: Option<&str>, env: bool, i
             );
             process::exit(1);
         }
-        set_config(server, kv, &config_path);
+        set_config(server, kv, secure, &config_path);
         return;
+    }
+
+    if secure {
+        eprintln!(
+            "{} {} requires {}.",
+            "✗".red().bold(),
+            "--secure".bold(),
+            "--set".bold()
+        );
+        process::exit(1);
     }
 
     if interactive {
@@ -365,7 +394,7 @@ fn show_config(server: &str, config_path: &std::path::Path) {
 }
 
 /// Sets a single config value (`key=value`) for an installed server.
-fn set_config(server: &str, kv: &str, config_path: &Path) {
+fn set_config(server: &str, kv: &str, secure: bool, config_path: &Path) {
     let (key, value) = match kv.split_once('=') {
         Some((k, v)) => (k.trim(), v.trim()),
         None => {
@@ -437,7 +466,19 @@ fn set_config(server: &str, kv: &str, config_path: &Path) {
         }
     }
 
-    installed.config.insert(key.to_string(), value.to_string());
+    let persisted_value = if secure {
+        match store_secret(server, key, value) {
+            Ok(reference) => reference,
+            Err(msg) => {
+                eprintln!("{} {}", "✗".red().bold(), msg);
+                process::exit(1);
+            }
+        }
+    } else {
+        value.to_string()
+    };
+
+    installed.config.insert(key.to_string(), persisted_value);
 
     let toml_str = match toml::to_string_pretty(&installed) {
         Ok(s) => s,
@@ -452,13 +493,22 @@ fn set_config(server: &str, kv: &str, config_path: &Path) {
         process::exit(1);
     }
 
-    println!(
-        "{} Set {} = {} for {}.",
-        "✓".green().bold(),
-        key.bold(),
-        value,
-        server.cyan()
-    );
+    if secure {
+        println!(
+            "{} Stored {} securely for {}.",
+            "✓".green().bold(),
+            key.bold(),
+            server.cyan()
+        );
+    } else {
+        println!(
+            "{} Set {} = {} for {}.",
+            "✓".green().bold(),
+            key.bold(),
+            value,
+            server.cyan()
+        );
+    }
 }
 
 /// Prints environment-variable mapping for a registry server definition.

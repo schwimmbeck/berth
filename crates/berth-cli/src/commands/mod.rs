@@ -72,6 +72,10 @@ pub enum Commands {
         #[arg(long)]
         set: Option<String>,
 
+        /// Store `--set` value in secure backend (keyring by default)
+        #[arg(long)]
+        secure: bool,
+
         /// Show required environment variables
         #[arg(long)]
         env: bool,
@@ -188,9 +192,17 @@ pub fn execute(command: Commands) {
             server,
             path,
             set,
+            secure,
             env,
             interactive,
-        } => config::execute(&server, path.as_deref(), set.as_deref(), env, interactive),
+        } => config::execute(
+            &server,
+            path.as_deref(),
+            set.as_deref(),
+            secure,
+            env,
+            interactive,
+        ),
         Commands::Start { server } => start::execute(server.as_deref()),
         Commands::Stop { server } => stop::execute(server.as_deref()),
         Commands::Restart { server } => restart::execute(&server),

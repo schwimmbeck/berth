@@ -723,6 +723,43 @@ fn config_set_updates_value() {
 }
 
 #[test]
+fn config_set_secure_stores_secret_reference() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+
+    let mut cmd = berth_with_home(tmp.path());
+    cmd.env("BERTH_SECRET_BACKEND", "file");
+    let output = cmd
+        .args(["config", "github", "--set", "token=abc123", "--secure"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let config_path = tmp.path().join(".berth/servers/github.toml");
+    let content = std::fs::read_to_string(config_path).unwrap();
+    assert!(content.contains("secret://github/token"));
+    assert!(!content.contains("abc123"));
+}
+
+#[test]
+fn config_secure_without_set_exits_1() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+
+    let output = berth_with_home(tmp.path())
+        .args(["config", "github", "--secure"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+}
+
+#[test]
 fn config_interactive_updates_value() {
     let tmp = tempfile::tempdir().unwrap();
     berth_with_home(tmp.path())
@@ -2147,6 +2184,31 @@ fn proxy_applies_env_permission_revoke() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("env-missing"));
+}
+
+#[test]
+fn proxy_resolves_secure_secret_reference() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+    let mut secure = berth_with_home(tmp.path());
+    secure.env("BERTH_SECRET_BACKEND", "file");
+    let secure_set = secure
+        .args(["config", "github", "--set", "token=abc123", "--secure"])
+        .output()
+        .unwrap();
+    assert!(secure_set.status.success());
+
+    patch_runtime_to_print_env_var(tmp.path(), "github", "GITHUB_TOKEN");
+
+    let mut proxy = berth_with_home(tmp.path());
+    proxy.env("BERTH_SECRET_BACKEND", "file");
+    let output = proxy.args(["proxy", "github"]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("env-present"));
 }
 
 // --- update ---

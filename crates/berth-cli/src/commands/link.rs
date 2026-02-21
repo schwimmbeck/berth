@@ -13,6 +13,7 @@ use berth_registry::Registry;
 
 use crate::paths;
 use crate::permission_filter::{filter_env_map, load_permission_overrides};
+use crate::secrets::resolve_config_value;
 
 #[derive(Serialize)]
 struct ClientServerConfig {
@@ -248,7 +249,15 @@ fn load_linkable_servers() -> Result<Vec<(String, ClientServerConfig)>, String> 
                 if let Some(env_var) = &field.env {
                     if let Some(value) = installed.config.get(&field.key) {
                         if !value.trim().is_empty() {
-                            env.insert(env_var.clone(), value.clone());
+                            let resolved =
+                                resolve_config_value(&name, &field.key, value).map_err(|e| {
+                                    format!(
+                                        "Failed to resolve config key `{}` for {}: {e}",
+                                        field.key,
+                                        name.cyan()
+                                    )
+                                })?;
+                            env.insert(env_var.clone(), resolved);
                         }
                     }
                 }

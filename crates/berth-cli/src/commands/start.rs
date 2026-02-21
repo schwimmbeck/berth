@@ -18,6 +18,7 @@ use crate::permission_filter::{
 use crate::runtime_policy::parse_runtime_policy;
 use crate::sandbox_policy::{parse_sandbox_policy, KEY_SANDBOX_NETWORK};
 use crate::sandbox_runtime::apply_sandbox_runtime;
+use crate::secrets::resolve_config_value;
 
 /// Executes the `berth start` command.
 pub fn execute(server: Option<&str>) {
@@ -265,7 +266,15 @@ fn build_process_spec(
             if let Some(env_var) = &field.env {
                 if let Some(value) = installed.config.get(&field.key) {
                     if !value.trim().is_empty() {
-                        env.insert(env_var.clone(), value.clone());
+                        let resolved =
+                            resolve_config_value(name, &field.key, value).map_err(|e| {
+                                format!(
+                                    "Failed to resolve config key `{}` for {}: {e}",
+                                    field.key,
+                                    name.cyan()
+                                )
+                            })?;
+                        env.insert(env_var.clone(), resolved);
                     }
                 }
             }

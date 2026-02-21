@@ -11,6 +11,7 @@ berth uninstall <server>
 berth update <server|--all>
 berth config <server>
 berth config <server> --interactive
+berth config <server> --set key=value --secure
 berth config export [file]
 berth config import <file>
 ```

@@ -54,3 +54,9 @@ For complete argument details, use:
 berth --help
 berth <command> --help
 ```
+
+Registry source overrides (advanced):
+
+- `BERTH_REGISTRY_INDEX_URL` (remote JSON index)
+- `BERTH_REGISTRY_INDEX_FILE` (local JSON index file)
+- `BERTH_REGISTRY_CACHE` (cache file path)

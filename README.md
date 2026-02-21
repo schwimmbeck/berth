@@ -117,6 +117,11 @@ Sandbox runtime note:
 - On Linux, `berth.sandbox=basic` attempts a hardened launch via `setpriv --no-new-privs` when available.
 - On macOS, `berth.sandbox=basic` uses `sandbox-exec` with a generated profile (default-deny baseline, declared write-path allowances).
 
+Registry source overrides (optional):
+- `BERTH_REGISTRY_INDEX_URL` fetch registry JSON via `curl`/`wget` and use it for lookups.
+- `BERTH_REGISTRY_INDEX_FILE` load registry JSON from a local file path.
+- `BERTH_REGISTRY_CACHE` cache path for downloaded/overridden registry JSON.
+
 Security behavior examples:
 - Env secret filtering at launch:
   - `berth permissions github --revoke env:GITHUB_TOKEN`

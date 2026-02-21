@@ -67,6 +67,8 @@ dependencies = [
  "clap",
  "colored",
  "dirs",
+ "serde",
+ "serde_json",
  "tempfile",
  "toml",
 ]

@@ -57,7 +57,7 @@ berth list
 | MCP server log streaming | Working | Tail lifecycle events from persisted server logs |
 | MCP permission management | Planned | Declare and enforce server permissions |
 | MCP audit trail | Planned | Log every tool call with full context |
-| AI client integration | Planned | Auto-configure Claude Desktop, Cursor, Windsurf |
+| AI client integration | Working | Auto-configure Claude Desktop (Cursor/Windsurf planned) |
 
 ## Commands
 
@@ -79,8 +79,10 @@ berth logs <server>            Show recent MCP server logs
 
 berth permissions <server>     Manage MCP server permissions (planned)
 berth audit [server]           View MCP tool call audit log (planned)
-berth link <client>            Link to an AI client (planned)
-berth unlink <client>          Unlink from an AI client (planned)
+berth link claude-desktop      Link Berth-managed servers to Claude Desktop
+berth unlink claude-desktop    Remove Berth-managed servers from Claude Desktop
+berth link <client>            Link to other AI clients (planned)
+berth unlink <client>          Unlink from other AI clients (planned)
 berth proxy <server>           Run as transparent MCP proxy (planned)
 ```
 

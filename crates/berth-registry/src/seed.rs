@@ -16,7 +16,7 @@ mod tests {
     #[test]
     fn seed_registry_parses() {
         let servers = load_seed_registry();
-        assert_eq!(servers.len(), 20);
+        assert_eq!(servers.len(), 30);
     }
 
     #[test]
@@ -43,5 +43,15 @@ mod tests {
         assert!(names.contains(&"gitlab"));
         assert!(names.contains(&"sentry"));
         assert!(names.contains(&"datadog"));
+        assert!(names.contains(&"redis"));
+        assert!(names.contains(&"mongodb"));
+        assert!(names.contains(&"stripe"));
+        assert!(names.contains(&"shopify"));
+        assert!(names.contains(&"twilio"));
+        assert!(names.contains(&"sendgrid"));
+        assert!(names.contains(&"figma"));
+        assert!(names.contains(&"vercel"));
+        assert!(names.contains(&"supabase"));
+        assert!(names.contains(&"prisma"));
     }
 }

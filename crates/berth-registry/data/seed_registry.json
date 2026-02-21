@@ -871,5 +871,443 @@
     "tags": ["datadog", "monitoring", "metrics", "observability"],
     "maintainer": "Community",
     "trustLevel": "community"
+  },
+  {
+    "name": "redis",
+    "displayName": "Redis MCP Server",
+    "description": "Inspect keys and run safe Redis operations",
+    "version": "0.7.1",
+    "source": {
+      "type": "npm",
+      "package": "@modelcontextprotocol/server-redis",
+      "repository": "https://github.com/modelcontextprotocol/servers"
+    },
+    "runtime": {
+      "type": "node",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-redis"]
+    },
+    "transport": "stdio",
+    "permissions": {
+      "network": ["*:6379"],
+      "env": ["REDIS_URL"],
+      "filesystem": [],
+      "exec": []
+    },
+    "config": {
+      "required": [
+        { "key": "url", "env": "REDIS_URL", "description": "Redis connection URL", "sensitive": true }
+      ],
+      "optional": []
+    },
+    "compatibility": {
+      "clients": ["claude-desktop", "cursor", "windsurf", "continue", "vscode", "generic"],
+      "platforms": ["macos", "linux", "windows"]
+    },
+    "quality": {
+      "securityScan": "pass",
+      "healthCheck": true,
+      "lastVerified": "2026-02-21",
+      "downloads": 4290
+    },
+    "category": "databases",
+    "tags": ["redis", "cache", "key-value", "database"],
+    "maintainer": "Community",
+    "trustLevel": "community"
+  },
+  {
+    "name": "mongodb",
+    "displayName": "MongoDB MCP Server",
+    "description": "Query MongoDB collections and documents",
+    "version": "0.7.0",
+    "source": {
+      "type": "npm",
+      "package": "@modelcontextprotocol/server-mongodb",
+      "repository": "https://github.com/modelcontextprotocol/servers"
+    },
+    "runtime": {
+      "type": "node",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-mongodb"]
+    },
+    "transport": "stdio",
+    "permissions": {
+      "network": ["*:27017"],
+      "env": ["MONGODB_URI"],
+      "filesystem": [],
+      "exec": []
+    },
+    "config": {
+      "required": [
+        { "key": "uri", "env": "MONGODB_URI", "description": "MongoDB connection URI", "sensitive": true }
+      ],
+      "optional": [
+        { "key": "database", "description": "Default database", "default": null }
+      ]
+    },
+    "compatibility": {
+      "clients": ["claude-desktop", "cursor", "windsurf", "continue", "vscode", "generic"],
+      "platforms": ["macos", "linux", "windows"]
+    },
+    "quality": {
+      "securityScan": "pass",
+      "healthCheck": true,
+      "lastVerified": "2026-02-21",
+      "downloads": 4010
+    },
+    "category": "databases",
+    "tags": ["mongodb", "nosql", "database", "documents"],
+    "maintainer": "Community",
+    "trustLevel": "community"
+  },
+  {
+    "name": "stripe",
+    "displayName": "Stripe MCP Server",
+    "description": "Access Stripe customers, payments, and invoices",
+    "version": "0.6.4",
+    "source": {
+      "type": "npm",
+      "package": "@modelcontextprotocol/server-stripe",
+      "repository": "https://github.com/modelcontextprotocol/servers"
+    },
+    "runtime": {
+      "type": "node",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-stripe"]
+    },
+    "transport": "stdio",
+    "permissions": {
+      "network": ["api.stripe.com:443"],
+      "env": ["STRIPE_API_KEY"],
+      "filesystem": [],
+      "exec": []
+    },
+    "config": {
+      "required": [
+        { "key": "api-key", "env": "STRIPE_API_KEY", "description": "Stripe secret API key", "sensitive": true }
+      ],
+      "optional": []
+    },
+    "compatibility": {
+      "clients": ["claude-desktop", "cursor", "windsurf", "continue", "vscode", "generic"],
+      "platforms": ["macos", "linux", "windows"]
+    },
+    "quality": {
+      "securityScan": "pass",
+      "healthCheck": true,
+      "lastVerified": "2026-02-21",
+      "downloads": 3870
+    },
+    "category": "developer-tools",
+    "tags": ["stripe", "payments", "billing", "finance"],
+    "maintainer": "Community",
+    "trustLevel": "community"
+  },
+  {
+    "name": "shopify",
+    "displayName": "Shopify MCP Server",
+    "description": "Manage products, orders, and customers in Shopify",
+    "version": "0.6.3",
+    "source": {
+      "type": "npm",
+      "package": "@modelcontextprotocol/server-shopify",
+      "repository": "https://github.com/modelcontextprotocol/servers"
+    },
+    "runtime": {
+      "type": "node",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-shopify"]
+    },
+    "transport": "stdio",
+    "permissions": {
+      "network": ["*.myshopify.com:443"],
+      "env": ["SHOPIFY_ACCESS_TOKEN"],
+      "filesystem": [],
+      "exec": []
+    },
+    "config": {
+      "required": [
+        { "key": "access-token", "env": "SHOPIFY_ACCESS_TOKEN", "description": "Shopify Admin API token", "sensitive": true }
+      ],
+      "optional": [
+        { "key": "shop-domain", "description": "Shop domain (example.myshopify.com)", "default": null }
+      ]
+    },
+    "compatibility": {
+      "clients": ["claude-desktop", "cursor", "windsurf", "continue", "vscode", "generic"],
+      "platforms": ["macos", "linux", "windows"]
+    },
+    "quality": {
+      "securityScan": "pass",
+      "healthCheck": true,
+      "lastVerified": "2026-02-21",
+      "downloads": 2990
+    },
+    "category": "productivity",
+    "tags": ["shopify", "ecommerce", "orders", "products"],
+    "maintainer": "Community",
+    "trustLevel": "community"
+  },
+  {
+    "name": "twilio",
+    "displayName": "Twilio MCP Server",
+    "description": "Work with Twilio messaging and voice resources",
+    "version": "0.6.5",
+    "source": {
+      "type": "npm",
+      "package": "@modelcontextprotocol/server-twilio",
+      "repository": "https://github.com/modelcontextprotocol/servers"
+    },
+    "runtime": {
+      "type": "node",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-twilio"]
+    },
+    "transport": "stdio",
+    "permissions": {
+      "network": ["api.twilio.com:443"],
+      "env": ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN"],
+      "filesystem": [],
+      "exec": []
+    },
+    "config": {
+      "required": [
+        { "key": "account-sid", "env": "TWILIO_ACCOUNT_SID", "description": "Twilio account SID", "sensitive": true },
+        { "key": "auth-token", "env": "TWILIO_AUTH_TOKEN", "description": "Twilio auth token", "sensitive": true }
+      ],
+      "optional": []
+    },
+    "compatibility": {
+      "clients": ["claude-desktop", "cursor", "windsurf", "continue", "vscode", "generic"],
+      "platforms": ["macos", "linux", "windows"]
+    },
+    "quality": {
+      "securityScan": "pass",
+      "healthCheck": true,
+      "lastVerified": "2026-02-21",
+      "downloads": 3280
+    },
+    "category": "communication",
+    "tags": ["twilio", "sms", "voice", "communication"],
+    "maintainer": "Community",
+    "trustLevel": "community"
+  },
+  {
+    "name": "sendgrid",
+    "displayName": "SendGrid MCP Server",
+    "description": "Manage email templates, sends, and delivery stats",
+    "version": "0.6.0",
+    "source": {
+      "type": "npm",
+      "package": "@modelcontextprotocol/server-sendgrid",
+      "repository": "https://github.com/modelcontextprotocol/servers"
+    },
+    "runtime": {
+      "type": "node",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sendgrid"]
+    },
+    "transport": "stdio",
+    "permissions": {
+      "network": ["api.sendgrid.com:443"],
+      "env": ["SENDGRID_API_KEY"],
+      "filesystem": [],
+      "exec": []
+    },
+    "config": {
+      "required": [
+        { "key": "api-key", "env": "SENDGRID_API_KEY", "description": "SendGrid API key", "sensitive": true }
+      ],
+      "optional": []
+    },
+    "compatibility": {
+      "clients": ["claude-desktop", "cursor", "windsurf", "continue", "vscode", "generic"],
+      "platforms": ["macos", "linux", "windows"]
+    },
+    "quality": {
+      "securityScan": "pass",
+      "healthCheck": true,
+      "lastVerified": "2026-02-21",
+      "downloads": 2870
+    },
+    "category": "communication",
+    "tags": ["sendgrid", "email", "mail", "communication"],
+    "maintainer": "Community",
+    "trustLevel": "community"
+  },
+  {
+    "name": "figma",
+    "displayName": "Figma MCP Server",
+    "description": "Access Figma files, components, and comments",
+    "version": "0.6.6",
+    "source": {
+      "type": "npm",
+      "package": "@modelcontextprotocol/server-figma",
+      "repository": "https://github.com/modelcontextprotocol/servers"
+    },
+    "runtime": {
+      "type": "node",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-figma"]
+    },
+    "transport": "stdio",
+    "permissions": {
+      "network": ["api.figma.com:443"],
+      "env": ["FIGMA_TOKEN"],
+      "filesystem": [],
+      "exec": []
+    },
+    "config": {
+      "required": [
+        { "key": "token", "env": "FIGMA_TOKEN", "description": "Figma personal access token", "sensitive": true }
+      ],
+      "optional": []
+    },
+    "compatibility": {
+      "clients": ["claude-desktop", "cursor", "windsurf", "continue", "vscode", "generic"],
+      "platforms": ["macos", "linux", "windows"]
+    },
+    "quality": {
+      "securityScan": "pass",
+      "healthCheck": true,
+      "lastVerified": "2026-02-21",
+      "downloads": 3590
+    },
+    "category": "productivity",
+    "tags": ["figma", "design", "ui", "collaboration"],
+    "maintainer": "Community",
+    "trustLevel": "community"
+  },
+  {
+    "name": "vercel",
+    "displayName": "Vercel MCP Server",
+    "description": "Inspect projects, deployments, and logs on Vercel",
+    "version": "0.6.2",
+    "source": {
+      "type": "npm",
+      "package": "@modelcontextprotocol/server-vercel",
+      "repository": "https://github.com/modelcontextprotocol/servers"
+    },
+    "runtime": {
+      "type": "node",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-vercel"]
+    },
+    "transport": "stdio",
+    "permissions": {
+      "network": ["api.vercel.com:443"],
+      "env": ["VERCEL_TOKEN"],
+      "filesystem": [],
+      "exec": []
+    },
+    "config": {
+      "required": [
+        { "key": "token", "env": "VERCEL_TOKEN", "description": "Vercel API token", "sensitive": true }
+      ],
+      "optional": []
+    },
+    "compatibility": {
+      "clients": ["claude-desktop", "cursor", "windsurf", "continue", "vscode", "generic"],
+      "platforms": ["macos", "linux", "windows"]
+    },
+    "quality": {
+      "securityScan": "pass",
+      "healthCheck": true,
+      "lastVerified": "2026-02-21",
+      "downloads": 3440
+    },
+    "category": "developer-tools",
+    "tags": ["vercel", "deployments", "hosting", "serverless"],
+    "maintainer": "Community",
+    "trustLevel": "community"
+  },
+  {
+    "name": "supabase",
+    "displayName": "Supabase MCP Server",
+    "description": "Access Supabase database, auth, and storage resources",
+    "version": "0.6.1",
+    "source": {
+      "type": "npm",
+      "package": "@modelcontextprotocol/server-supabase",
+      "repository": "https://github.com/modelcontextprotocol/servers"
+    },
+    "runtime": {
+      "type": "node",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-supabase"]
+    },
+    "transport": "stdio",
+    "permissions": {
+      "network": ["*.supabase.co:443"],
+      "env": ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"],
+      "filesystem": [],
+      "exec": []
+    },
+    "config": {
+      "required": [
+        { "key": "url", "env": "SUPABASE_URL", "description": "Supabase project URL", "sensitive": false },
+        { "key": "service-role-key", "env": "SUPABASE_SERVICE_ROLE_KEY", "description": "Supabase service role key", "sensitive": true }
+      ],
+      "optional": []
+    },
+    "compatibility": {
+      "clients": ["claude-desktop", "cursor", "windsurf", "continue", "vscode", "generic"],
+      "platforms": ["macos", "linux", "windows"]
+    },
+    "quality": {
+      "securityScan": "pass",
+      "healthCheck": true,
+      "lastVerified": "2026-02-21",
+      "downloads": 3320
+    },
+    "category": "databases",
+    "tags": ["supabase", "database", "postgres", "backend"],
+    "maintainer": "Community",
+    "trustLevel": "community"
+  },
+  {
+    "name": "prisma",
+    "displayName": "Prisma MCP Server",
+    "description": "Inspect Prisma schema and query connected databases",
+    "version": "0.6.0",
+    "source": {
+      "type": "npm",
+      "package": "@modelcontextprotocol/server-prisma",
+      "repository": "https://github.com/modelcontextprotocol/servers"
+    },
+    "runtime": {
+      "type": "node",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-prisma"]
+    },
+    "transport": "stdio",
+    "permissions": {
+      "network": ["*:5432", "*:3306"],
+      "env": ["DATABASE_URL"],
+      "filesystem": ["read:/workspace"],
+      "exec": ["prisma"]
+    },
+    "config": {
+      "required": [
+        { "key": "database-url", "env": "DATABASE_URL", "description": "Primary database connection URL", "sensitive": true }
+      ],
+      "optional": [
+        { "key": "schema-path", "description": "Path to Prisma schema file", "default": "prisma/schema.prisma" }
+      ]
+    },
+    "compatibility": {
+      "clients": ["claude-desktop", "cursor", "windsurf", "continue", "vscode", "generic"],
+      "platforms": ["macos", "linux", "windows"]
+    },
+    "quality": {
+      "securityScan": "pass",
+      "healthCheck": true,
+      "lastVerified": "2026-02-21",
+      "downloads": 3180
+    },
+    "category": "developer-tools",
+    "tags": ["prisma", "orm", "database", "schema"],
+    "maintainer": "Community",
+    "trustLevel": "community"
   }
 ]

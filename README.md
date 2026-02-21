@@ -157,6 +157,16 @@ Berth ships with a built-in registry of popular MCP servers:
 | `gitlab` | Access GitLab projects, issues, merge requests, and pipelines | Developer Tools |
 | `sentry` | Inspect Sentry issues, alerts, and project error trends | Developer Tools |
 | `datadog` | Query Datadog metrics, traces, dashboards, and monitors | Developer Tools |
+| `redis` | Inspect keys and run safe Redis operations | Databases |
+| `mongodb` | Query MongoDB collections and documents | Databases |
+| `stripe` | Access Stripe customers, payments, and invoices | Developer Tools |
+| `shopify` | Manage products, orders, and customers in Shopify | Productivity |
+| `twilio` | Work with Twilio messaging and voice resources | Communication |
+| `sendgrid` | Manage email templates, sends, and delivery stats | Communication |
+| `figma` | Access Figma files, components, and comments | Productivity |
+| `vercel` | Inspect projects, deployments, and logs on Vercel | Developer Tools |
+| `supabase` | Access Supabase database, auth, and storage resources | Databases |
+| `prisma` | Inspect Prisma schema and query connected databases | Developer Tools |
 
 More MCP servers will be added as the registry grows.
 

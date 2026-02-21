@@ -786,10 +786,12 @@ fn route_server_detail(
                 json!({
                     "server": server,
                     "installCommand": format!("berth install {}", server.name),
+                    "installCommandCopy": format!("berth install {}", server.name),
                     "community": {
                         "stars": stars,
                         "reports": report_count
                     },
+                    "permissionsSummary": permissions_summary(server),
                     "maintainerVerified": maintainer_verified,
                     "badges": badges,
                     "qualityScore": quality_score,
@@ -987,6 +989,40 @@ fn publisher_badges(maintainer_verified: bool) -> Vec<String> {
     }
 }
 
+/// Builds a normalized permission summary for website rendering.
+fn permissions_summary(server: &ServerMetadata) -> Value {
+    let has_wildcard = |entries: &[String]| entries.iter().any(|entry| entry.trim() == "*");
+    let has_filesystem_write = server
+        .permissions
+        .filesystem
+        .iter()
+        .any(|entry| entry.trim() == "*" || entry.trim_start().starts_with("write:"));
+
+    json!({
+        "network": {
+            "count": server.permissions.network.len(),
+            "wildcard": has_wildcard(&server.permissions.network)
+        },
+        "env": {
+            "count": server.permissions.env.len(),
+            "wildcard": has_wildcard(&server.permissions.env)
+        },
+        "filesystem": {
+            "count": server.permissions.filesystem.len(),
+            "wildcard": has_wildcard(&server.permissions.filesystem),
+            "hasWriteAccess": has_filesystem_write
+        },
+        "exec": {
+            "count": server.permissions.exec.len(),
+            "wildcard": has_wildcard(&server.permissions.exec)
+        },
+        "total": server.permissions.network.len()
+            + server.permissions.env.len()
+            + server.permissions.filesystem.len()
+            + server.permissions.exec.len()
+    })
+}
+
 /// Returns a best-effort README URL for a repository.
 fn readme_url_for_repository(repository: &str) -> Option<String> {
     let trimmed = repository.trim().trim_end_matches('/');
@@ -1077,13 +1113,15 @@ fn server_summary(
         "version": server.version,
         "category": server.category,
         "maintainer": server.maintainer,
+        "permissionsSummary": permissions_summary(server),
         "maintainerVerified": maintainer_verified,
         "badges": badges,
         "qualityScore": quality_score,
         "readmeUrl": readme_url_for_repository(&server.source.repository),
         "trustLevel": server.trust_level.to_string(),
         "downloads": server.quality.downloads,
-        "installCommand": format!("berth install {}", server.name)
+        "installCommand": format!("berth install {}", server.name),
+        "installCommandCopy": format!("berth install {}", server.name)
     })
 }
 
@@ -1161,6 +1199,11 @@ mod tests {
             github["installCommand"].as_str(),
             Some("berth install github")
         );
+        assert_eq!(
+            github["installCommandCopy"].as_str(),
+            Some("berth install github")
+        );
+        assert!(github["permissionsSummary"]["total"].as_u64().unwrap_or(0) >= 1);
         assert!(github["qualityScore"].as_u64().unwrap_or(0) > 0);
         assert!(github["readmeUrl"]
             .as_str()
@@ -1289,6 +1332,16 @@ mod tests {
         let (detail_status, detail_body) =
             route_request(&req("GET", "/servers/github"), &registry, &state);
         assert_eq!(detail_status, 200);
+        assert_eq!(
+            detail_body["installCommandCopy"].as_str(),
+            Some("berth install github")
+        );
+        assert!(
+            detail_body["permissionsSummary"]["total"]
+                .as_u64()
+                .unwrap_or(0)
+                >= 1
+        );
         assert_eq!(detail_body["maintainerVerified"].as_bool(), Some(true));
         assert!(detail_body["qualityScore"].as_u64().unwrap_or(0) > 0);
         assert!(detail_body["readmeUrl"]

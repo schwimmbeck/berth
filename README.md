@@ -120,6 +120,8 @@ Registry API endpoints:
 - `maintainerVerified` + `badges`
 - `qualityScore` (deterministic ranking signal)
 - `readmeUrl` (best-effort repository README link for detail pages)
+- `permissionsSummary` (website-friendly permission counts/flags)
+- `installCommandCopy` (copy-ready install command text)
 
 Permission override formats:
 - `env:<VAR>` (example: `env:GITHUB_TOKEN`)

@@ -64,6 +64,8 @@ Registry API endpoints:
 - `maintainerVerified` + `badges`
 - `qualityScore`
 - `readmeUrl`
+- `permissionsSummary`
+- `installCommandCopy`
 
 Client integration:
 

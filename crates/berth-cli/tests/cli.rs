@@ -654,6 +654,11 @@ fn registry_api_serves_health_search_and_downloads() {
         .find(|server| server["name"].as_str() == Some("github"))
         .unwrap();
     assert_eq!(github["maintainerVerified"].as_bool(), Some(true));
+    assert_eq!(
+        github["installCommandCopy"].as_str(),
+        Some("berth install github")
+    );
+    assert!(github["permissionsSummary"]["total"].as_u64().unwrap_or(0) >= 1);
     assert!(github["badges"]
         .as_array()
         .unwrap()
@@ -668,6 +673,11 @@ fn registry_api_serves_health_search_and_downloads() {
     let (detail_status, detail_body) = http_get(&addr, "/servers/github");
     assert_eq!(detail_status, 200);
     let detail: serde_json::Value = serde_json::from_str(&detail_body).unwrap();
+    assert_eq!(
+        detail["installCommandCopy"].as_str(),
+        Some("berth install github")
+    );
+    assert!(detail["permissionsSummary"]["total"].as_u64().unwrap_or(0) >= 1);
     assert!(detail["qualityScore"].as_u64().unwrap_or(0) > 0);
     assert!(detail["readmeUrl"]
         .as_str()

@@ -586,6 +586,36 @@ fn render_site_catalog_page(query: Option<&str>, registry: &Registry, state: &Ap
     let has_prev = offset > 0;
     let has_next = showing_end < total;
 
+    let (_stats_status, stats_payload) = route_stats(Some("top=5"), registry, state);
+    let total_servers = stats_payload["servers"]["total"].as_u64().unwrap_or(0);
+    let total_downloads = stats_payload["servers"]["downloadsTotal"]
+        .as_u64()
+        .unwrap_or(0);
+    let total_stars = stats_payload["community"]["starsTotal"]
+        .as_u64()
+        .unwrap_or(0);
+    let total_reports = stats_payload["community"]["reportsTotal"]
+        .as_u64()
+        .unwrap_or(0);
+
+    let mut trending_query_pairs = vec!["limit=5".to_string()];
+    if let Some(category) = category_filter.as_deref() {
+        trending_query_pairs.push(format!("category={}", url_encode(category)));
+    }
+    if let Some(platform) = platform_filter.as_deref() {
+        trending_query_pairs.push(format!("platform={}", url_encode(platform)));
+    }
+    if let Some(trust_level) = trust_filter.as_deref() {
+        trending_query_pairs.push(format!("trustLevel={}", url_encode(trust_level)));
+    }
+    let trending_query = trending_query_pairs.join("&");
+    let (_trending_status, trending_payload) =
+        route_servers_trending(Some(&trending_query), registry, state);
+    let trending_servers = trending_payload["servers"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+
     let prev_href = build_site_catalog_path(&SiteCatalogUrlParams {
         search_query: &search_query,
         category: category_filter.as_deref(),
@@ -706,6 +736,52 @@ fn render_site_catalog_page(query: Option<&str>, registry: &Registry, state: &Ap
     content.push_str("<h1>Server Catalog</h1>");
     content.push_str("<p>Browse MCP servers with quality, permission, and community signals from your local Berth registry API.</p>");
     content.push_str("</header>");
+
+    content.push_str("<section class=\"panel overview-panel\">");
+    content.push_str("<h2>Overview</h2>");
+    content.push_str("<div class=\"overview-grid\">");
+    content.push_str(&format!(
+        "<div class=\"metric\"><span class=\"metric-label\">Servers</span><strong>{}</strong></div>",
+        format_number(total_servers)
+    ));
+    content.push_str(&format!(
+        "<div class=\"metric\"><span class=\"metric-label\">Downloads</span><strong>{}</strong></div>",
+        format_number(total_downloads)
+    ));
+    content.push_str(&format!(
+        "<div class=\"metric\"><span class=\"metric-label\">Stars</span><strong>{}</strong></div>",
+        format_number(total_stars)
+    ));
+    content.push_str(&format!(
+        "<div class=\"metric\"><span class=\"metric-label\">Reports</span><strong>{}</strong></div>",
+        format_number(total_reports)
+    ));
+    content.push_str("</div>");
+    if !trending_servers.is_empty() {
+        content.push_str("<h3>Trending Right Now</h3>");
+        content.push_str("<ul class=\"trending-list\">");
+        for server in trending_servers.into_iter().take(5) {
+            let name = server["name"].as_str().unwrap_or_default();
+            if name.is_empty() {
+                continue;
+            }
+            let display_name = server["displayName"].as_str().unwrap_or(name);
+            let trend_score = server["trendScore"].as_u64().unwrap_or(0);
+            let stars = server["stars"].as_u64().unwrap_or(0);
+            content.push_str("<li>");
+            content.push_str(&format!(
+                "<a href=\"/site/servers/{}\">{}</a> <span class=\"meta\">trend {} · stars {}</span>",
+                html_escape(name),
+                html_escape(display_name),
+                trend_score,
+                stars
+            ));
+            content.push_str("</li>");
+        }
+        content.push_str("</ul>");
+    }
+    content.push_str("</section>");
+
     content.push_str("<section class=\"panel\">");
     content.push_str("<form class=\"filters\" method=\"GET\" action=\"/site\">");
     content.push_str("<label>Query<input type=\"text\" name=\"q\" placeholder=\"github\" value=\"");
@@ -1021,6 +1097,32 @@ a { color: #005f34; }
   border-radius: 12px;
   padding: 1rem;
   margin-top: 1rem;
+}
+.overview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 0.6rem;
+  margin-top: 0.55rem;
+}
+.metric {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.55rem 0.65rem;
+  background: #f8fdf7;
+}
+.metric-label {
+  display: block;
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.trending-list {
+  margin: 0.6rem 0 0;
+  padding-left: 1rem;
+}
+.trending-list li {
+  margin: 0.45rem 0;
 }
 .filters {
   display: grid;
@@ -3173,6 +3275,8 @@ mod tests {
         assert!(catalog.contains("/site/servers/github"));
         assert!(catalog.contains("copy-btn"));
         assert!(catalog.contains("page <strong>1</strong>"));
+        assert!(catalog.contains("Overview"));
+        assert!(catalog.contains("Trending Right Now"));
 
         let (detail_status, detail) =
             route_website_request(&req("GET", "/site/servers/github"), &registry, &state).unwrap();

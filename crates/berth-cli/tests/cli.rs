@@ -605,6 +605,8 @@ fn registry_api_serves_health_search_and_downloads() {
     assert!(site_body.contains("Server Catalog"));
     assert!(site_body.contains("GitHub MCP Server"));
     assert!(site_body.contains("copy-btn"));
+    assert!(site_body.contains("Overview"));
+    assert!(site_body.contains("Trending Right Now"));
 
     let (site_page_status, _site_page_headers, site_page_body) =
         http_get_with_headers(&addr, "/site?limit=1&offset=1");

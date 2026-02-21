@@ -111,6 +111,18 @@ struct ListedServer<'a> {
     quality_score: u32,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct SiteCatalogUrlParams<'a> {
+    search_query: &'a str,
+    category: Option<&'a str>,
+    platform: Option<&'a str>,
+    trust_level: Option<&'a str>,
+    sort_by: SortBy,
+    sort_order: SortOrder,
+    limit: usize,
+    offset: usize,
+}
+
 impl ApiState {
     fn new(community_dir: PathBuf) -> Self {
         Self { community_dir }
@@ -499,6 +511,7 @@ fn render_site_catalog_page(query: Option<&str>, registry: &Registry, state: &Ap
     };
     let sort_order = parse_sort_order(query, sort_by).unwrap_or(default_sort_order);
     let limit = parse_usize_param(query, "limit").unwrap_or(24).min(100);
+    let requested_offset = parse_usize_param(query, "offset").unwrap_or(0);
 
     let matches_filter = |server: &&ServerMetadata| {
         matches_server_filters(
@@ -551,7 +564,48 @@ fn render_site_catalog_page(query: Option<&str>, registry: &Registry, state: &Ap
         .collect::<Vec<_>>();
     listed.sort_by(|left, right| compare_listed_servers(left, right, sort_by, sort_order));
     let total = listed.len();
-    let shown_servers = listed.into_iter().take(limit).collect::<Vec<_>>();
+    let offset = if total == 0 {
+        0
+    } else {
+        requested_offset.min(((total - 1) / limit) * limit)
+    };
+    let shown_servers = listed
+        .into_iter()
+        .skip(offset)
+        .take(limit)
+        .collect::<Vec<_>>();
+    let shown_count = shown_servers.len();
+    let showing_start = if shown_count == 0 { 0 } else { offset + 1 };
+    let showing_end = offset + shown_count;
+    let total_pages = if total == 0 {
+        1
+    } else {
+        ((total - 1) / limit) + 1
+    };
+    let page = if total == 0 { 1 } else { (offset / limit) + 1 };
+    let has_prev = offset > 0;
+    let has_next = showing_end < total;
+
+    let prev_href = build_site_catalog_path(&SiteCatalogUrlParams {
+        search_query: &search_query,
+        category: category_filter.as_deref(),
+        platform: platform_filter.as_deref(),
+        trust_level: trust_filter.as_deref(),
+        sort_by,
+        sort_order,
+        limit,
+        offset: offset.saturating_sub(limit),
+    });
+    let next_href = build_site_catalog_path(&SiteCatalogUrlParams {
+        search_query: &search_query,
+        category: category_filter.as_deref(),
+        platform: platform_filter.as_deref(),
+        trust_level: trust_filter.as_deref(),
+        sort_by,
+        sort_order,
+        limit,
+        offset: offset.saturating_add(limit),
+    });
 
     let mut categories = BTreeSet::new();
     let mut platforms = BTreeSet::new();
@@ -675,6 +729,7 @@ fn render_site_catalog_page(query: Option<&str>, registry: &Registry, state: &Ap
     content.push_str("<label>Order<select name=\"order\">");
     content.push_str(&order_options);
     content.push_str("</select></label>");
+    content.push_str("<input type=\"hidden\" name=\"offset\" value=\"0\">");
     content.push_str(
         "<label>Limit<input type=\"number\" min=\"1\" max=\"100\" name=\"limit\" value=\"",
     );
@@ -683,10 +738,23 @@ fn render_site_catalog_page(query: Option<&str>, registry: &Registry, state: &Ap
     content.push_str("<button type=\"submit\">Apply</button>");
     content.push_str("</form>");
     content.push_str(&format!(
-        "<p class=\"summary\">Showing <strong>{}</strong> of <strong>{}</strong> servers.</p>",
-        usize::min(limit, total),
-        total
+        "<p class=\"summary\">Showing <strong>{showing_start}-{showing_end}</strong> of <strong>{total}</strong> servers (page <strong>{page}</strong> of <strong>{total_pages}</strong>).</p>",
     ));
+    content.push_str("<div class=\"pagination\">");
+    if has_prev {
+        content.push_str(&format!(
+            "<a href=\"{}\">Previous</a>",
+            html_escape(&prev_href)
+        ));
+    } else {
+        content.push_str("<span class=\"pagination-disabled\">Previous</span>");
+    }
+    if has_next {
+        content.push_str(&format!("<a href=\"{}\">Next</a>", html_escape(&next_href)));
+    } else {
+        content.push_str("<span class=\"pagination-disabled\">Next</span>");
+    }
+    content.push_str("</div>");
     content.push_str("</section>");
     content.push_str("<section class=\"catalog\">");
     content.push_str(&cards);
@@ -982,6 +1050,26 @@ button {
 }
 button:hover { filter: brightness(1.06); }
 .summary { margin: 0.8rem 0 0; color: var(--muted); }
+.pagination {
+  margin-top: 0.75rem;
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+}
+.pagination a,
+.pagination span {
+  border-radius: 999px;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.82rem;
+}
+.pagination a {
+  text-decoration: none;
+  background: #e1f3e5;
+}
+.pagination-disabled {
+  color: #7a9185;
+  background: #edf4ee;
+}
 .catalog {
   margin-top: 1rem;
   display: grid;
@@ -1201,6 +1289,34 @@ fn render_site_filter_options(values: &BTreeSet<String>, selected: &str) -> Stri
     out
 }
 
+/// Builds a stable `/site` URL with current catalog query parameters.
+fn build_site_catalog_path(params: &SiteCatalogUrlParams<'_>) -> String {
+    let mut pairs = Vec::new();
+    if !params.search_query.trim().is_empty() {
+        pairs.push(("q".to_string(), url_encode(params.search_query.trim())));
+    }
+    if let Some(category) = params.category.filter(|value| !value.trim().is_empty()) {
+        pairs.push(("category".to_string(), url_encode(category.trim())));
+    }
+    if let Some(platform) = params.platform.filter(|value| !value.trim().is_empty()) {
+        pairs.push(("platform".to_string(), url_encode(platform.trim())));
+    }
+    if let Some(trust_level) = params.trust_level.filter(|value| !value.trim().is_empty()) {
+        pairs.push(("trustLevel".to_string(), url_encode(trust_level.trim())));
+    }
+    pairs.push(("sortBy".to_string(), params.sort_by.as_str().to_string()));
+    pairs.push(("order".to_string(), params.sort_order.as_str().to_string()));
+    pairs.push(("limit".to_string(), params.limit.to_string()));
+    pairs.push(("offset".to_string(), params.offset.to_string()));
+
+    let query = pairs
+        .into_iter()
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect::<Vec<_>>()
+        .join("&");
+    format!("/site?{query}")
+}
+
 /// Renders one permissions section for detail pages.
 fn render_site_permissions_list(title: &str, entries: &[String]) -> String {
     let mut html = String::new();
@@ -1276,6 +1392,20 @@ fn url_decode(input: &str) -> String {
                 out.push(value as char);
                 idx += 1;
             }
+        }
+    }
+    out
+}
+
+/// Encodes basic URL query values.
+fn url_encode(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for byte in input.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            out.push(byte as char);
+        } else {
+            out.push('%');
+            out.push_str(&format!("{byte:02X}"));
         }
     }
     out
@@ -3042,6 +3172,7 @@ mod tests {
         assert!(catalog.contains("Server Catalog"));
         assert!(catalog.contains("/site/servers/github"));
         assert!(catalog.contains("copy-btn"));
+        assert!(catalog.contains("page <strong>1</strong>"));
 
         let (detail_status, detail) =
             route_website_request(&req("GET", "/site/servers/github"), &registry, &state).unwrap();
@@ -3051,6 +3182,14 @@ mod tests {
         assert!(detail.contains("Permissions"));
         assert!(detail.contains("Star this server"));
         assert!(detail.contains("Recent Reports"));
+
+        let (page_status, page_body) =
+            route_website_request(&req("GET", "/site?limit=1&offset=1"), &registry, &state)
+                .unwrap();
+        assert_eq!(page_status, 200);
+        assert!(page_body.contains("page <strong>2</strong>"));
+        assert!(page_body.contains("Previous"));
+        assert!(page_body.contains("Next"));
     }
 
     #[test]
@@ -3075,6 +3214,29 @@ mod tests {
     fn url_decode_translates_plus_and_percent_sequences() {
         assert_eq!(url_decode("google+drive"), "google drive");
         assert_eq!(url_decode("mcp%2Fgithub"), "mcp/github");
+    }
+
+    #[test]
+    fn build_site_catalog_path_preserves_query_state() {
+        let path = build_site_catalog_path(&SiteCatalogUrlParams {
+            search_query: "git hub",
+            category: Some("developer-tools"),
+            platform: Some("macos"),
+            trust_level: Some("official"),
+            sort_by: SortBy::QualityScore,
+            sort_order: SortOrder::Desc,
+            limit: 20,
+            offset: 40,
+        });
+        assert!(path.starts_with("/site?"));
+        assert!(path.contains("q=git%20hub"));
+        assert!(path.contains("category=developer-tools"));
+        assert!(path.contains("platform=macos"));
+        assert!(path.contains("trustLevel=official"));
+        assert!(path.contains("sortBy=qualityScore"));
+        assert!(path.contains("order=desc"));
+        assert!(path.contains("limit=20"));
+        assert!(path.contains("offset=40"));
     }
 
     #[test]

@@ -571,7 +571,7 @@ fn registry_api_serves_health_search_and_downloads() {
             "--bind",
             "127.0.0.1:0",
             "--max-requests",
-            "22",
+            "23",
         ])
         .stdout(Stdio::piped())
         .spawn()
@@ -605,6 +605,13 @@ fn registry_api_serves_health_search_and_downloads() {
     assert!(site_body.contains("Server Catalog"));
     assert!(site_body.contains("GitHub MCP Server"));
     assert!(site_body.contains("copy-btn"));
+
+    let (site_page_status, _site_page_headers, site_page_body) =
+        http_get_with_headers(&addr, "/site?limit=1&offset=1");
+    assert_eq!(site_page_status, 200);
+    assert!(site_page_body.contains("page <strong>2</strong>"));
+    assert!(site_page_body.contains("Previous"));
+    assert!(site_page_body.contains("Next"));
 
     let (site_detail_status, site_detail_headers, site_detail_body) =
         http_get_with_headers(&addr, "/site/servers/github");

@@ -1,3 +1,5 @@
+//! Command handler for `berth update`.
+
 use colored::Colorize;
 use std::process;
 
@@ -5,6 +7,7 @@ use berth_registry::Registry;
 
 use crate::paths;
 
+/// Executes the `berth update` command.
 pub fn execute(server: Option<&str>, all: bool) {
     if !all && server.is_none() {
         eprintln!(

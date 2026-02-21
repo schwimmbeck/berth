@@ -1,8 +1,11 @@
+//! Command handler for `berth info`.
+
 use berth_registry::types::TrustLevel;
 use berth_registry::Registry;
 use colored::Colorize;
 use std::process;
 
+/// Executes the `berth info` command.
 pub fn execute(server_name: &str) {
     let registry = Registry::from_seed();
 

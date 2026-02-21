@@ -1,5 +1,8 @@
+//! Command handler for `berth permissions`.
+
 use colored::Colorize;
 
+/// Executes the `berth permissions` command.
 pub fn execute(server: &str, grant: Option<&str>, revoke: Option<&str>) {
     println!(
         "{} {} is not yet implemented.",

@@ -1,3 +1,5 @@
+//! Command handler for `berth list`.
+
 use colored::Colorize;
 use std::fs;
 
@@ -7,6 +9,7 @@ use berth_runtime::{RuntimeManager, ServerStatus};
 
 use crate::paths;
 
+/// Executes the `berth list` command.
 pub fn execute() {
     let servers_dir = match paths::berth_servers_dir() {
         Some(d) => d,
@@ -98,6 +101,7 @@ pub fn execute() {
     println!();
 }
 
+/// Prints a consistent "no servers installed" hint block.
 fn print_no_servers() {
     println!("{} No servers installed.\n", "!".yellow().bold());
     println!(

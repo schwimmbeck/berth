@@ -1,6 +1,9 @@
+//! Command handler for `berth search`.
+
 use berth_registry::Registry;
 use colored::Colorize;
 
+/// Executes the `berth search` command.
 pub fn execute(query: &str) {
     let registry = Registry::from_seed();
     let results = registry.search(query);
@@ -64,6 +67,7 @@ pub fn execute(query: &str) {
     );
 }
 
+/// Formats a download counter with `K`/`M` suffixes for display.
 fn format_downloads(n: u64) -> String {
     if n >= 1_000_000 {
         format!("{:.1}M", n as f64 / 1_000_000.0)

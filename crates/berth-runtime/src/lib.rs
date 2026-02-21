@@ -1,3 +1,5 @@
+//! Synchronous runtime state manager for installed MCP servers.
+
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fs::{self, OpenOptions};
@@ -5,10 +7,12 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Returns crate version for runtime diagnostics/tests.
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
+/// Runtime status persisted for a server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ServerStatus {
@@ -25,12 +29,14 @@ impl fmt::Display for ServerStatus {
     }
 }
 
+/// Result of attempting to start a server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StartOutcome {
     Started,
     AlreadyRunning,
 }
 
+/// Result of attempting to stop a server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StopOutcome {
     Stopped,
@@ -57,16 +63,19 @@ pub struct RuntimeManager {
 }
 
 impl RuntimeManager {
+    /// Creates a manager rooted at a Berth home directory.
     pub fn new<P: Into<PathBuf>>(berth_home: P) -> Self {
         RuntimeManager {
             berth_home: berth_home.into(),
         }
     }
 
+    /// Returns current persisted status for a server.
     pub fn status(&self, server: &str) -> io::Result<ServerStatus> {
         Ok(self.read_state(server)?.status)
     }
 
+    /// Marks a server as running and appends a `START` log entry.
     pub fn start(&self, server: &str) -> io::Result<StartOutcome> {
         let mut state = self.read_state(server)?;
         if state.status == ServerStatus::Running {
@@ -80,6 +89,7 @@ impl RuntimeManager {
         Ok(StartOutcome::Started)
     }
 
+    /// Marks a server as stopped and appends a `STOP` log entry.
     pub fn stop(&self, server: &str) -> io::Result<StopOutcome> {
         let mut state = self.read_state(server)?;
         if state.status == ServerStatus::Stopped {
@@ -93,12 +103,14 @@ impl RuntimeManager {
         Ok(StopOutcome::Stopped)
     }
 
+    /// Restarts a server by issuing stop then start transitions.
     pub fn restart(&self, server: &str) -> io::Result<()> {
         let _ = self.stop(server)?;
         let _ = self.start(server)?;
         Ok(())
     }
 
+    /// Returns the last `lines` log lines for a server.
     pub fn tail_logs(&self, server: &str, lines: usize) -> io::Result<Vec<String>> {
         if lines == 0 {
             return Ok(Vec::new());
@@ -118,22 +130,27 @@ impl RuntimeManager {
         Ok(all[all.len() - lines..].to_vec())
     }
 
+    /// Runtime state directory path.
     fn runtime_dir(&self) -> PathBuf {
         self.berth_home.join("runtime")
     }
 
+    /// Runtime log directory path.
     fn logs_dir(&self) -> PathBuf {
         self.berth_home.join("logs")
     }
 
+    /// Per-server state file path.
     fn state_path(&self, server: &str) -> PathBuf {
         self.runtime_dir().join(format!("{server}.toml"))
     }
 
+    /// Per-server log file path.
     fn log_path(&self, server: &str) -> PathBuf {
         self.logs_dir().join(format!("{server}.log"))
     }
 
+    /// Reads persisted state, defaulting to stopped when missing.
     fn read_state(&self, server: &str) -> io::Result<RuntimeState> {
         let path = self.state_path(server);
         if !path.exists() {
@@ -144,6 +161,7 @@ impl RuntimeManager {
         toml::from_str(&content).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
     }
 
+    /// Persists a server runtime state as TOML.
     fn write_state(&self, server: &str, state: &RuntimeState) -> io::Result<()> {
         fs::create_dir_all(self.runtime_dir())?;
         let serialized = toml::to_string_pretty(state)
@@ -151,6 +169,7 @@ impl RuntimeManager {
         fs::write(self.state_path(server), serialized)
     }
 
+    /// Appends one lifecycle event line to a server log file.
     fn append_log(&self, server: &str, event: &str) -> io::Result<()> {
         fs::create_dir_all(self.logs_dir())?;
         let mut file = OpenOptions::new()
@@ -161,6 +180,7 @@ impl RuntimeManager {
     }
 }
 
+/// Returns current unix timestamp in seconds.
 fn now_epoch_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

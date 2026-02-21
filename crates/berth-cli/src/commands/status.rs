@@ -1,3 +1,5 @@
+//! Command handler for `berth status`.
+
 use colored::Colorize;
 use std::fs;
 use std::process;
@@ -7,6 +9,7 @@ use berth_runtime::{RuntimeManager, ServerStatus};
 
 use crate::paths;
 
+/// Executes the `berth status` command.
 pub fn execute() {
     let servers_dir = match paths::berth_servers_dir() {
         Some(d) => d,

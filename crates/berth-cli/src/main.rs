@@ -1,3 +1,5 @@
+//! Berth CLI binary entrypoint.
+
 mod commands;
 pub mod paths;
 
@@ -12,6 +14,7 @@ struct Cli {
     command: Commands,
 }
 
+/// Parses CLI arguments and dispatches to command handlers.
 fn main() {
     let cli = Cli::parse();
     commands::execute(cli.command);

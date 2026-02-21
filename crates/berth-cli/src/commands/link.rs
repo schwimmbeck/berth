@@ -1,3 +1,5 @@
+//! Command handler for `berth link`.
+
 use colored::Colorize;
 use serde::Serialize;
 use serde_json::{Map, Value};
@@ -20,6 +22,7 @@ struct ClaudeDesktopServerConfig {
     env: BTreeMap<String, String>,
 }
 
+/// Executes the `berth link` command.
 pub fn execute(client: &str) {
     if client != "claude-desktop" {
         eprintln!(
@@ -34,6 +37,7 @@ pub fn execute(client: &str) {
     link_claude_desktop();
 }
 
+/// Links all installable Berth servers into Claude Desktop config.
 fn link_claude_desktop() {
     let config_path = match paths::claude_desktop_config_path() {
         Some(p) => p,
@@ -183,6 +187,7 @@ fn link_claude_desktop() {
     }
 }
 
+/// Loads installed server definitions and converts them to Claude Desktop entries.
 fn load_linkable_servers() -> Result<Vec<(String, ClaudeDesktopServerConfig)>, String> {
     let servers_dir = paths::berth_servers_dir().ok_or("Could not determine home directory.")?;
 
@@ -264,6 +269,7 @@ fn load_linkable_servers() -> Result<Vec<(String, ClaudeDesktopServerConfig)>, S
     Ok(out)
 }
 
+/// Returns a deterministic backup path next to the client config file.
 fn backup_path(config_path: &Path) -> PathBuf {
     let file_name = config_path
         .file_name()

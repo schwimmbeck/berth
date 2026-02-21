@@ -1,5 +1,8 @@
+//! Path helpers for Berth config, runtime, and client integration files.
+
 use std::path::PathBuf;
 
+/// Returns Berth home directory (`$BERTH_HOME` override or `~/.berth`).
 pub fn berth_home() -> Option<PathBuf> {
     // Allow override via BERTH_HOME for testing
     if let Ok(home) = std::env::var("BERTH_HOME") {
@@ -8,14 +11,17 @@ pub fn berth_home() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".berth"))
 }
 
+/// Returns Berth server config directory (`~/.berth/servers`).
 pub fn berth_servers_dir() -> Option<PathBuf> {
     berth_home().map(|h| h.join("servers"))
 }
 
+/// Returns the config file path for a server (`<name>.toml`).
 pub fn server_config_path(name: &str) -> Option<PathBuf> {
     berth_servers_dir().map(|d| d.join(format!("{name}.toml")))
 }
 
+/// Returns the Claude Desktop config path for the current platform.
 pub fn claude_desktop_config_path() -> Option<PathBuf> {
     if let Ok(home) = std::env::var("BERTH_HOME") {
         return Some(

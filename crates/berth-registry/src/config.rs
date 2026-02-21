@@ -1,8 +1,11 @@
+//! Installed server configuration model persisted by the CLI.
+
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 use crate::types::ServerMetadata;
 
+/// On-disk server configuration written to `~/.berth/servers/<name>.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstalledServer {
     pub server: ServerInfo,
@@ -56,6 +59,7 @@ pub struct ConfigMeta {
 }
 
 impl InstalledServer {
+    /// Converts registry metadata into initial installed-server config.
     pub fn from_metadata(meta: &ServerMetadata) -> Self {
         let mut config = BTreeMap::new();
 

@@ -1,9 +1,12 @@
+//! Command handler for `berth uninstall`.
+
 use colored::Colorize;
 use std::fs;
 use std::process;
 
 use crate::paths;
 
+/// Executes the `berth uninstall` command.
 pub fn execute(server: &str) {
     let config_path = match paths::server_config_path(server) {
         Some(p) => p,

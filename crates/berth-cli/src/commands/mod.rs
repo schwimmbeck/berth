@@ -1,3 +1,5 @@
+//! CLI subcommand declarations and dispatch.
+
 pub mod audit;
 pub mod config;
 pub mod info;
@@ -18,6 +20,7 @@ pub mod update;
 
 use clap::Subcommand;
 
+/// Top-level CLI subcommands supported by `berth`.
 #[derive(Subcommand)]
 pub enum Commands {
     /// Search the registry for MCP servers
@@ -145,6 +148,7 @@ pub enum Commands {
     },
 }
 
+/// Dispatches a parsed CLI command to its command module.
 pub fn execute(command: Commands) {
     match command {
         Commands::Search { query } => search::execute(&query),

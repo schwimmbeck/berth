@@ -1,7 +1,10 @@
+//! Embedded seed registry loader.
+
 use crate::types::ServerMetadata;
 
 const SEED_DATA: &str = include_str!("../data/seed_registry.json");
 
+/// Parses the embedded seed registry JSON into typed metadata.
 pub fn load_seed_registry() -> Vec<ServerMetadata> {
     serde_json::from_str(SEED_DATA).expect("embedded seed registry should be valid JSON")
 }

@@ -1,3 +1,5 @@
+//! Command handler for `berth install`.
+
 use colored::Colorize;
 use std::fs;
 use std::process;
@@ -7,6 +9,7 @@ use berth_registry::Registry;
 
 use crate::paths;
 
+/// Executes the `berth install` command.
 pub fn execute(server: &str) {
     let registry = Registry::from_seed();
 

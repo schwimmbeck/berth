@@ -1,5 +1,8 @@
+//! Command handler for `berth audit`.
+
 use colored::Colorize;
 
+/// Executes the `berth audit` command.
 pub fn execute(server: Option<&str>, since: Option<&str>) {
     println!(
         "{} {} is not yet implemented.",

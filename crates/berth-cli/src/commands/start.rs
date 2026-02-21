@@ -1,3 +1,5 @@
+//! Command handler for `berth start`.
+
 use colored::Colorize;
 use std::fs;
 use std::path::Path;
@@ -8,6 +10,7 @@ use berth_runtime::{RuntimeManager, StartOutcome};
 
 use crate::paths;
 
+/// Executes the `berth start` command.
 pub fn execute(server: Option<&str>) {
     let targets = resolve_targets(server);
     let berth_home = match paths::berth_home() {
@@ -97,6 +100,7 @@ pub fn execute(server: Option<&str>) {
     }
 }
 
+/// Resolves target server names from a specific name or all installed servers.
 fn resolve_targets(server: Option<&str>) -> Vec<String> {
     if let Some(name) = server {
         let config_path = match paths::server_config_path(name) {
@@ -161,6 +165,7 @@ fn resolve_targets(server: Option<&str>) -> Vec<String> {
     servers
 }
 
+/// Loads and parses an installed server config file.
 fn read_installed(name: &str, config_path: &Path) -> Result<InstalledServer, ()> {
     let content = match fs::read_to_string(config_path) {
         Ok(c) => c,
@@ -189,6 +194,7 @@ fn read_installed(name: &str, config_path: &Path) -> Result<InstalledServer, ()>
     }
 }
 
+/// Returns required config keys that are missing or empty.
 fn missing_required_keys(installed: &InstalledServer) -> Vec<String> {
     installed
         .config_meta

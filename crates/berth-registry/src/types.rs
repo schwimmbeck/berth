@@ -1,3 +1,5 @@
+//! Core registry metadata types parsed from seed JSON.
+
 use serde::{Deserialize, Serialize};
 use std::fmt;
 

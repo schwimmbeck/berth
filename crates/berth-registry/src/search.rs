@@ -1,11 +1,15 @@
+//! Search and ranking helpers for registry servers.
+
 use crate::types::ServerMetadata;
 
+/// Ranked search result pairing metadata with a relevance score.
 #[derive(Debug)]
 pub struct SearchResult<'a> {
     pub server: &'a ServerMetadata,
     pub score: u32,
 }
 
+/// Performs keyword search and returns descending relevance results.
 pub fn search_servers<'a>(servers: &'a [ServerMetadata], query: &str) -> Vec<SearchResult<'a>> {
     let query_lower = query.to_lowercase();
 
@@ -25,10 +29,12 @@ pub fn search_servers<'a>(servers: &'a [ServerMetadata], query: &str) -> Vec<Sea
     results
 }
 
+/// Finds a server by exact name.
 pub fn find_server<'a>(servers: &'a [ServerMetadata], name: &str) -> Option<&'a ServerMetadata> {
     servers.iter().find(|s| s.name == name)
 }
 
+/// Computes relevance score for a server against a lowercase query.
 fn relevance_score(server: &ServerMetadata, query: &str) -> u32 {
     let mut score = 0u32;
 

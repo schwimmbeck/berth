@@ -1,3 +1,5 @@
+//! Command handler for `berth logs`.
+
 use colored::Colorize;
 use std::process;
 
@@ -5,6 +7,7 @@ use berth_runtime::RuntimeManager;
 
 use crate::paths;
 
+/// Executes the `berth logs` command.
 pub fn execute(server: &str, tail: u32) {
     let config_path = match paths::server_config_path(server) {
         Some(p) => p,

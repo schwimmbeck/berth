@@ -1,3 +1,5 @@
+//! Command handler for `berth restart`.
+
 use colored::Colorize;
 use std::fs;
 use std::process;
@@ -7,6 +9,7 @@ use berth_runtime::RuntimeManager;
 
 use crate::paths;
 
+/// Executes the `berth restart` command.
 pub fn execute(server: &str) {
     let config_path = match paths::server_config_path(server) {
         Some(p) => p,

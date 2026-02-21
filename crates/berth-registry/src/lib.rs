@@ -1,3 +1,5 @@
+//! Registry loading and query APIs for Berth.
+
 pub mod config;
 pub mod search;
 pub mod seed;
@@ -7,25 +9,30 @@ use search::{search_servers, SearchResult};
 use seed::load_seed_registry;
 use types::ServerMetadata;
 
+/// In-memory registry loaded from the embedded seed dataset.
 pub struct Registry {
     servers: Vec<ServerMetadata>,
 }
 
 impl Registry {
+    /// Builds a registry from embedded seed JSON.
     pub fn from_seed() -> Self {
         Registry {
             servers: load_seed_registry(),
         }
     }
 
+    /// Searches servers by keyword and relevance.
     pub fn search(&self, query: &str) -> Vec<SearchResult<'_>> {
         search_servers(&self.servers, query)
     }
 
+    /// Returns a server by exact name.
     pub fn get(&self, name: &str) -> Option<&ServerMetadata> {
         search::find_server(&self.servers, name)
     }
 
+    /// Returns all registry servers.
     pub fn list_all(&self) -> &[ServerMetadata] {
         &self.servers
     }

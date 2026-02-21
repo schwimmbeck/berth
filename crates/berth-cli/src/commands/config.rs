@@ -1,3 +1,5 @@
+//! Command handler for `berth config`.
+
 use colored::Colorize;
 use std::fs;
 use std::process;
@@ -7,6 +9,7 @@ use berth_registry::Registry;
 
 use crate::paths;
 
+/// Executes the `berth config` command.
 pub fn execute(server: &str, set: Option<&str>, env: bool) {
     let config_path = match paths::server_config_path(server) {
         Some(p) => p,
@@ -39,6 +42,7 @@ pub fn execute(server: &str, set: Option<&str>, env: bool) {
     show_config(server, &config_path);
 }
 
+/// Prints configured and required keys for an installed server.
 fn show_config(server: &str, config_path: &std::path::Path) {
     let content = match fs::read_to_string(config_path) {
         Ok(c) => c,
@@ -94,6 +98,7 @@ fn show_config(server: &str, config_path: &std::path::Path) {
     println!();
 }
 
+/// Sets a single config value (`key=value`) for an installed server.
 fn set_config(server: &str, kv: &str, config_path: &std::path::Path) {
     let (key, value) = match kv.split_once('=') {
         Some((k, v)) => (k.trim(), v.trim()),
@@ -170,6 +175,7 @@ fn set_config(server: &str, kv: &str, config_path: &std::path::Path) {
     );
 }
 
+/// Prints environment-variable mapping for a registry server definition.
 fn show_env(server: &str) {
     let registry = Registry::from_seed();
 

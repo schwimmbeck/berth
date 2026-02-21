@@ -2,6 +2,7 @@
 
 use colored::Colorize;
 use serde_json::{json, Value};
+use std::collections::BTreeSet;
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process;
@@ -124,40 +125,156 @@ fn route_request(request_line: &str, registry: &Registry) -> (u16, Value) {
                 "status": "ok"
             }),
         ),
+        "/servers/filters" => route_server_filters(registry),
         "/servers" => {
             let query_value = query_param(query, "q")
                 .or_else(|| query_param(query, "query"))
                 .unwrap_or_default();
-            let servers = if query_value.trim().is_empty() {
-                registry
-                    .list_all()
-                    .iter()
-                    .map(server_summary)
-                    .collect::<Vec<Value>>()
-            } else {
-                registry
-                    .search(query_value)
-                    .into_iter()
-                    .map(|result| {
-                        let mut summary = server_summary(result.server);
-                        if let Some(obj) = summary.as_object_mut() {
-                            obj.insert("score".to_string(), json!(result.score));
-                        }
-                        summary
-                    })
-                    .collect::<Vec<Value>>()
+            let category_filter = query_param(query, "category").filter(|v| !v.trim().is_empty());
+            let platform_filter = query_param(query, "platform").filter(|v| !v.trim().is_empty());
+            let trust_filter = query_param(query, "trustLevel")
+                .or_else(|| query_param(query, "trust_level"))
+                .filter(|v| !v.trim().is_empty());
+            let offset = parse_usize_param(query, "offset").unwrap_or(0);
+            let limit = parse_usize_param(query, "limit");
+
+            let matches_filter = |server: &&berth_registry::types::ServerMetadata| {
+                matches_server_filters(server, category_filter, platform_filter, trust_filter)
             };
+
+            let entries: Vec<(&berth_registry::types::ServerMetadata, Option<u32>)> =
+                if query_value.trim().is_empty() {
+                    registry
+                        .list_all()
+                        .iter()
+                        .filter(matches_filter)
+                        .map(|server| (server, None))
+                        .collect()
+                } else {
+                    registry
+                        .search(query_value)
+                        .into_iter()
+                        .map(|result| (result.server, Some(result.score)))
+                        .filter(|(server, _)| {
+                            matches_server_filters(
+                                server,
+                                category_filter,
+                                platform_filter,
+                                trust_filter,
+                            )
+                        })
+                        .collect()
+                };
+            let total = entries.len();
+            let sliced = if let Some(limit) = limit {
+                entries
+                    .into_iter()
+                    .skip(offset)
+                    .take(limit)
+                    .collect::<Vec<_>>()
+            } else {
+                entries.into_iter().skip(offset).collect::<Vec<_>>()
+            };
+            let servers = sliced
+                .into_iter()
+                .map(|(server, score)| {
+                    let mut summary = server_summary(server);
+                    if let Some(score) = score {
+                        if let Some(obj) = summary.as_object_mut() {
+                            obj.insert("score".to_string(), json!(score));
+                        }
+                    }
+                    summary
+                })
+                .collect::<Vec<Value>>();
+            let count = servers.len();
             (
                 200,
                 json!({
                     "query": query_value,
-                    "count": servers.len(),
+                    "filters": {
+                        "category": category_filter,
+                        "platform": platform_filter,
+                        "trustLevel": trust_filter
+                    },
+                    "total": total,
+                    "count": count,
+                    "offset": offset,
+                    "limit": limit,
                     "servers": servers
                 }),
             )
         }
         _ => route_server_detail(path, registry),
     }
+}
+
+/// Routes `/servers/filters` path.
+fn route_server_filters(registry: &Registry) -> (u16, Value) {
+    let mut categories = BTreeSet::new();
+    let mut platforms = BTreeSet::new();
+    let mut trust_levels = BTreeSet::new();
+
+    for server in registry.list_all() {
+        categories.insert(server.category.clone());
+        for platform in &server.compatibility.platforms {
+            platforms.insert(platform.clone());
+        }
+        trust_levels.insert(server.trust_level.to_string());
+    }
+
+    (
+        200,
+        json!({
+            "categories": categories.into_iter().collect::<Vec<_>>(),
+            "platforms": platforms.into_iter().collect::<Vec<_>>(),
+            "trustLevels": trust_levels.into_iter().collect::<Vec<_>>()
+        }),
+    )
+}
+
+/// Returns whether a server matches all optional search filters.
+fn matches_server_filters(
+    server: &berth_registry::types::ServerMetadata,
+    category: Option<&str>,
+    platform: Option<&str>,
+    trust_level: Option<&str>,
+) -> bool {
+    if let Some(category) = category {
+        if !server.category.eq_ignore_ascii_case(category) {
+            return false;
+        }
+    }
+
+    if let Some(platform) = platform {
+        if !server
+            .compatibility
+            .platforms
+            .iter()
+            .any(|p| p.eq_ignore_ascii_case(platform))
+        {
+            return false;
+        }
+    }
+
+    if let Some(trust_level) = trust_level {
+        if !server
+            .trust_level
+            .to_string()
+            .eq_ignore_ascii_case(trust_level)
+        {
+            return false;
+        }
+    }
+
+    true
+}
+
+/// Parses a positive integer query parameter.
+fn parse_usize_param(query: Option<&str>, key: &str) -> Option<usize> {
+    query_param(query, key)
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|v| *v > 0)
 }
 
 /// Routes `/servers/<name>` and `/servers/<name>/downloads` paths.
@@ -208,14 +325,16 @@ fn route_server_detail(path: &str, registry: &Registry) -> (u16, Value) {
         None => (
             200,
             json!({
-                "server": server
+                "server": server,
+                "installCommand": format!("berth install {}", server.name)
             }),
         ),
         Some("downloads") => (
             200,
             json!({
                 "server": server.name,
-                "downloads": server.quality.downloads
+                "downloads": server.quality.downloads,
+                "installCommand": format!("berth install {}", server.name)
             }),
         ),
         _ => (
@@ -257,7 +376,8 @@ fn server_summary(server: &berth_registry::types::ServerMetadata) -> Value {
         "version": server.version,
         "category": server.category,
         "trustLevel": server.trust_level.to_string(),
-        "downloads": server.quality.downloads
+        "downloads": server.quality.downloads,
+        "installCommand": format!("berth install {}", server.name)
     })
 }
 
@@ -303,6 +423,10 @@ mod tests {
         let (status, search) = route_request("GET /servers?q=github HTTP/1.1", &registry);
         assert_eq!(status, 200);
         assert!(search["count"].as_u64().unwrap_or(0) >= 1);
+        assert_eq!(
+            search["servers"][0]["installCommand"].as_str(),
+            Some("berth install github")
+        );
 
         let (status_downloads, downloads) =
             route_request("GET /servers/github/downloads HTTP/1.1", &registry);
@@ -316,5 +440,35 @@ mod tests {
         let (status, body) = route_request("GET /servers/nope HTTP/1.1", &registry);
         assert_eq!(status, 404);
         assert_eq!(body["error"].as_str(), Some("server not found"));
+    }
+
+    #[test]
+    fn route_request_supports_filters_and_pagination() {
+        let registry = Registry::from_seed();
+        let (status, body) = route_request(
+            "GET /servers?category=developer-tools&platform=macos&trustLevel=official&limit=1 HTTP/1.1",
+            &registry,
+        );
+        assert_eq!(status, 200);
+        assert_eq!(body["count"].as_u64(), Some(1));
+        assert!(body["total"].as_u64().unwrap_or(0) >= 1);
+        let first = &body["servers"][0];
+        assert_eq!(first["category"].as_str(), Some("developer-tools"));
+        assert_eq!(first["trustLevel"].as_str(), Some("official"));
+    }
+
+    #[test]
+    fn route_request_lists_available_filter_values() {
+        let registry = Registry::from_seed();
+        let (status, body) = route_request("GET /servers/filters HTTP/1.1", &registry);
+        assert_eq!(status, 200);
+        let categories = body["categories"].as_array().unwrap();
+        assert!(categories
+            .iter()
+            .any(|v| v.as_str() == Some("developer-tools")));
+        let platforms = body["platforms"].as_array().unwrap();
+        assert!(platforms.iter().any(|v| v.as_str() == Some("macos")));
+        let trust_levels = body["trustLevels"].as_array().unwrap();
+        assert!(trust_levels.iter().any(|v| v.as_str() == Some("official")));
     }
 }

@@ -99,6 +99,13 @@ berth proxy <server>           Run as transparent MCP proxy
 berth registry-api             Serve local registry REST API (supports --bind and --max-requests)
 ```
 
+Registry API endpoints:
+- `GET /health`
+- `GET /servers?q=<query>&category=<category>&platform=<platform>&trustLevel=<level>&offset=<n>&limit=<n>`
+- `GET /servers/filters`
+- `GET /servers/<name>`
+- `GET /servers/<name>/downloads`
+
 Permission override formats:
 - `env:<VAR>` (example: `env:GITHUB_TOKEN`)
 - `env:*`

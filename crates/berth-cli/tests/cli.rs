@@ -453,7 +453,7 @@ fn registry_api_serves_health_search_and_downloads() {
             "--bind",
             "127.0.0.1:0",
             "--max-requests",
-            "3",
+            "5",
         ])
         .stdout(Stdio::piped())
         .spawn()
@@ -483,10 +483,39 @@ fn registry_api_serves_health_search_and_downloads() {
     let search: serde_json::Value = serde_json::from_str(&search_body).unwrap();
     assert!(search["count"].as_u64().unwrap_or(0) >= 1);
 
+    let (filters_status, filters_body) = http_get(&addr, "/servers/filters");
+    assert_eq!(filters_status, 200);
+    let filters: serde_json::Value = serde_json::from_str(&filters_body).unwrap();
+    assert!(filters["categories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v.as_str() == Some("developer-tools")));
+
+    let (filtered_status, filtered_body) = http_get(
+        &addr,
+        "/servers?category=developer-tools&platform=macos&trustLevel=official&limit=1",
+    );
+    assert_eq!(filtered_status, 200);
+    let filtered: serde_json::Value = serde_json::from_str(&filtered_body).unwrap();
+    assert_eq!(filtered["count"].as_u64(), Some(1));
+    assert_eq!(
+        filtered["servers"][0]["category"].as_str(),
+        Some("developer-tools")
+    );
+    assert_eq!(
+        filtered["servers"][0]["trustLevel"].as_str(),
+        Some("official")
+    );
+
     let (downloads_status, downloads_body) = http_get(&addr, "/servers/github/downloads");
     assert_eq!(downloads_status, 200);
     let downloads: serde_json::Value = serde_json::from_str(&downloads_body).unwrap();
     assert_eq!(downloads["server"].as_str(), Some("github"));
+    assert_eq!(
+        downloads["installCommand"].as_str(),
+        Some("berth install github")
+    );
 
     let status = child.wait().unwrap();
     assert!(status.success());

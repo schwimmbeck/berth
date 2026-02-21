@@ -24,6 +24,16 @@ The MCP ecosystem is growing fast — Anthropic created the protocol, OpenAI ado
 
 Berth fixes all of this with a single binary.
 
+## Install
+
+```bash
+# Binary install (latest GitHub release)
+curl -fsSL https://raw.githubusercontent.com/berth-dev/berth/main/install.sh | sh
+
+# Optional: install from source via Homebrew (HEAD formula in this repo)
+brew install --HEAD ./Formula/berth.rb
+```
+
 ## Quick Start
 
 ```bash

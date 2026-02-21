@@ -10,7 +10,15 @@ use berth_registry::Registry;
 use crate::paths;
 
 /// Executes the `berth install` command.
-pub fn execute(server: &str) {
+pub fn execute(server_spec: &str) {
+    let (server, requested_version) = match parse_server_spec(server_spec) {
+        Ok(v) => v,
+        Err(msg) => {
+            eprintln!("{} {}", "✗".red().bold(), msg);
+            process::exit(1);
+        }
+    };
+
     let registry = Registry::from_seed();
 
     let meta = match registry.get(server) {
@@ -24,6 +32,18 @@ pub fn execute(server: &str) {
             process::exit(1);
         }
     };
+    if let Some(version) = requested_version {
+        if meta.version != version {
+            eprintln!(
+                "{} Version {} for {} is not available in the seed registry (available: {}).",
+                "✗".red().bold(),
+                version.bold(),
+                server.cyan(),
+                meta.version
+            );
+            process::exit(1);
+        }
+    }
 
     let config_path = match paths::server_config_path(server) {
         Some(p) => p,
@@ -93,4 +113,17 @@ pub fn execute(server: &str) {
             format!("berth config {server}").bold()
         );
     }
+}
+
+/// Parses `server` or `server@version` install specs.
+fn parse_server_spec(spec: &str) -> Result<(&str, Option<&str>), String> {
+    if let Some((server, version)) = spec.rsplit_once('@') {
+        if server.is_empty() || version.is_empty() {
+            return Err(
+                "Invalid server format. Use `<server>` or `<server>@<version>`.".to_string(),
+            );
+        }
+        return Ok((server, Some(version)));
+    }
+    Ok((spec, None))
 }

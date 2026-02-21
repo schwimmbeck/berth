@@ -67,7 +67,7 @@ berth search <query>           Search the MCP server registry
 berth info <server>            Show detailed MCP server info
 berth list                     List installed MCP servers
 
-berth install <server>         Install an MCP server
+berth install <server[@version]> Install an MCP server
 berth uninstall <server>       Remove an MCP server
 berth update <server|--all>    Update MCP servers
 berth config <server>          Configure an MCP server

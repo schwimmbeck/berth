@@ -298,6 +298,43 @@ fn install_suggests_config() {
     assert!(stdout.contains("token"));
 }
 
+#[test]
+fn install_specific_version_succeeds() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = berth_with_home(tmp.path())
+        .args(["install", "github@1.2.0"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Installed"));
+    assert!(stdout.contains("v1.2.0"));
+}
+
+#[test]
+fn install_unavailable_version_exits_1() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = berth_with_home(tmp.path())
+        .args(["install", "github@9.9.9"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("not available"));
+}
+
+#[test]
+fn install_invalid_server_spec_exits_1() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = berth_with_home(tmp.path())
+        .args(["install", "github@"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Invalid server format"));
+}
+
 // --- uninstall ---
 
 #[test]

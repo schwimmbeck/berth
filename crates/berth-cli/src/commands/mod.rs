@@ -146,6 +146,10 @@ pub enum Commands {
         /// Print matching audit entries as JSON
         #[arg(long)]
         json: bool,
+
+        /// Export matching audit entries to a file
+        #[arg(long, value_name = "FILE")]
+        export: Option<String>,
     },
 
     /// Link Berth to an AI client (e.g. claude-desktop, cursor)
@@ -205,7 +209,14 @@ pub fn execute(command: Commands) {
             since,
             action,
             json,
-        } => audit::execute(server.as_deref(), since.as_deref(), action.as_deref(), json),
+            export,
+        } => audit::execute(
+            server.as_deref(),
+            since.as_deref(),
+            action.as_deref(),
+            json,
+            export.as_deref(),
+        ),
         Commands::Link { client } => link::execute(&client),
         Commands::Unlink { client } => unlink::execute(&client),
         Commands::Proxy { server } => proxy::execute(&server),

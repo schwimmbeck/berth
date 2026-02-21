@@ -1403,6 +1403,95 @@ fn audit_json_output_is_machine_readable() {
     assert!(arr.iter().any(|ev| ev["action"].as_str() == Some("stop")));
 }
 
+#[test]
+fn audit_export_json_output_writes_array_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "token=abc123"])
+        .output()
+        .unwrap();
+    patch_runtime_to_long_running(tmp.path(), "github");
+    berth_with_home(tmp.path())
+        .args(["start", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["stop", "github"])
+        .output()
+        .unwrap();
+
+    let export_file = tmp.path().join("exports").join("audit.json");
+    let output = berth_with_home(tmp.path())
+        .args([
+            "audit",
+            "github",
+            "--json",
+            "--export",
+            export_file.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(export_file.exists());
+
+    let content = std::fs::read_to_string(export_file).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&content).unwrap();
+    let arr = json.as_array().unwrap();
+    assert!(!arr.is_empty());
+    assert!(arr.iter().any(|ev| ev["action"].as_str() == Some("start")));
+    assert!(arr.iter().any(|ev| ev["action"].as_str() == Some("stop")));
+}
+
+#[test]
+fn audit_export_jsonl_output_writes_line_delimited_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "token=abc123"])
+        .output()
+        .unwrap();
+    patch_runtime_to_long_running(tmp.path(), "github");
+    berth_with_home(tmp.path())
+        .args(["start", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["stop", "github"])
+        .output()
+        .unwrap();
+
+    let export_file = tmp.path().join("exports").join("audit.jsonl");
+    let output = berth_with_home(tmp.path())
+        .args([
+            "audit",
+            "github",
+            "--action",
+            "start",
+            "--export",
+            export_file.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(export_file.exists());
+
+    let content = std::fs::read_to_string(export_file).unwrap();
+    let lines: Vec<&str> = content.lines().filter(|line| !line.is_empty()).collect();
+    assert!(!lines.is_empty());
+    for line in lines {
+        let parsed: serde_json::Value = serde_json::from_str(line).unwrap();
+        assert_eq!(parsed["action"].as_str(), Some("start"));
+        assert_eq!(parsed["server"].as_str(), Some("github"));
+    }
+}
+
 // --- proxy ---
 
 #[test]

@@ -3,6 +3,7 @@
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::path::Path;
 use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -23,7 +24,13 @@ struct AuditEvent {
 }
 
 /// Executes the `berth audit` command.
-pub fn execute(server: Option<&str>, since: Option<&str>, action: Option<&str>, json: bool) {
+pub fn execute(
+    server: Option<&str>,
+    since: Option<&str>,
+    action: Option<&str>,
+    json: bool,
+    export: Option<&str>,
+) {
     let since_secs = match since {
         Some(raw) => match parse_since(raw) {
             Ok(v) => Some(v),
@@ -44,6 +51,14 @@ pub fn execute(server: Option<&str>, since: Option<&str>, action: Option<&str>, 
     };
 
     if !path.exists() {
+        if let Some(export_path) = export {
+            if let Err(msg) = write_export(export_path, &[], json) {
+                eprintln!("{} {}", "✗".red().bold(), msg);
+                process::exit(1);
+            }
+            print_export_success(0, export_path);
+            return;
+        }
         println!("{} No audit entries yet.", "!".yellow().bold());
         return;
     }
@@ -91,11 +106,28 @@ pub fn execute(server: Option<&str>, since: Option<&str>, action: Option<&str>, 
     }
 
     if events.is_empty() {
+        if let Some(export_path) = export {
+            if let Err(msg) = write_export(export_path, &events, json) {
+                eprintln!("{} {}", "✗".red().bold(), msg);
+                process::exit(1);
+            }
+            print_export_success(0, export_path);
+            return;
+        }
         if json {
             println!("[]");
             return;
         }
         println!("{} No matching audit entries.", "!".yellow().bold());
+        return;
+    }
+
+    if let Some(export_path) = export {
+        if let Err(msg) = write_export(export_path, &events, json) {
+            eprintln!("{} {}", "✗".red().bold(), msg);
+            process::exit(1);
+        }
+        print_export_success(events.len(), export_path);
         return;
     }
 
@@ -201,4 +233,43 @@ fn format_age(seconds: u64) -> String {
         return format!("{}h ago", seconds / 3_600);
     }
     format!("{}d ago", seconds / 86_400)
+}
+
+/// Writes matching audit events to a file as JSON or JSONL.
+fn write_export(path: &str, events: &[AuditEvent], json: bool) -> Result<(), String> {
+    let out = Path::new(path);
+    if let Some(parent) = out.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create export directory: {e}"))?;
+        }
+    }
+
+    let rendered = if json {
+        serde_json::to_string_pretty(events)
+            .map_err(|e| format!("Failed to serialize JSON: {e}"))?
+    } else if events.is_empty() {
+        String::new()
+    } else {
+        let mut lines = Vec::with_capacity(events.len());
+        for ev in events {
+            lines.push(
+                serde_json::to_string(ev).map_err(|e| format!("Failed to serialize JSONL: {e}"))?,
+            );
+        }
+        format!("{}\n", lines.join("\n"))
+    };
+
+    fs::write(out, rendered).map_err(|e| format!("Failed to write export file: {e}"))
+}
+
+/// Prints export completion status with pluralized count.
+fn print_export_success(count: usize, path: &str) {
+    println!(
+        "{} Exported {} audit entr{} to {}.",
+        "✓".green().bold(),
+        count,
+        if count == 1 { "y" } else { "ies" },
+        path
+    );
 }

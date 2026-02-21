@@ -152,6 +152,11 @@ Berth ships with a built-in registry of popular MCP servers:
 | `google-maps` | Places, geocoding, and routing via Google Maps APIs | Search |
 | `docker` | Inspect and manage local Docker containers and images | Developer Tools |
 | `kubernetes` | Query and operate Kubernetes cluster resources | Developer Tools |
+| `aws` | Access AWS resources across common services | Developer Tools |
+| `linear` | Read and update Linear issues, projects, and teams | Productivity |
+| `gitlab` | Access GitLab projects, issues, merge requests, and pipelines | Developer Tools |
+| `sentry` | Inspect Sentry issues, alerts, and project error trends | Developer Tools |
+| `datadog` | Query Datadog metrics, traces, dashboards, and monitors | Developer Tools |
 
 More MCP servers will be added as the registry grows.
 

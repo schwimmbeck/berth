@@ -16,7 +16,7 @@ mod tests {
     #[test]
     fn seed_registry_parses() {
         let servers = load_seed_registry();
-        assert_eq!(servers.len(), 15);
+        assert_eq!(servers.len(), 20);
     }
 
     #[test]
@@ -38,5 +38,10 @@ mod tests {
         assert!(names.contains(&"google-maps"));
         assert!(names.contains(&"docker"));
         assert!(names.contains(&"kubernetes"));
+        assert!(names.contains(&"aws"));
+        assert!(names.contains(&"linear"));
+        assert!(names.contains(&"gitlab"));
+        assert!(names.contains(&"sentry"));
+        assert!(names.contains(&"datadog"));
     }
 }

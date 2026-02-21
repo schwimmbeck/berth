@@ -646,5 +646,230 @@
     "tags": ["kubernetes", "k8s", "cluster", "devops"],
     "maintainer": "Community",
     "trustLevel": "community"
+  },
+  {
+    "name": "aws",
+    "displayName": "AWS MCP Server",
+    "description": "Access AWS resources across common services",
+    "version": "0.7.5",
+    "source": {
+      "type": "npm",
+      "package": "@modelcontextprotocol/server-aws",
+      "repository": "https://github.com/modelcontextprotocol/servers"
+    },
+    "runtime": {
+      "type": "node",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-aws"]
+    },
+    "transport": "stdio",
+    "permissions": {
+      "network": ["*.amazonaws.com:443"],
+      "env": ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION"],
+      "filesystem": [],
+      "exec": []
+    },
+    "config": {
+      "required": [
+        { "key": "access-key-id", "env": "AWS_ACCESS_KEY_ID", "description": "AWS access key id", "sensitive": true },
+        { "key": "secret-access-key", "env": "AWS_SECRET_ACCESS_KEY", "description": "AWS secret access key", "sensitive": true }
+      ],
+      "optional": [
+        { "key": "region", "env": "AWS_REGION", "description": "Default AWS region", "default": "us-east-1" }
+      ]
+    },
+    "compatibility": {
+      "clients": ["claude-desktop", "cursor", "windsurf", "continue", "vscode", "generic"],
+      "platforms": ["macos", "linux", "windows"]
+    },
+    "quality": {
+      "securityScan": "pass",
+      "healthCheck": true,
+      "lastVerified": "2026-02-21",
+      "downloads": 7340
+    },
+    "category": "developer-tools",
+    "tags": ["aws", "cloud", "infrastructure", "devops"],
+    "maintainer": "Community",
+    "trustLevel": "community"
+  },
+  {
+    "name": "linear",
+    "displayName": "Linear MCP Server",
+    "description": "Read and update Linear issues, projects, and teams",
+    "version": "0.6.8",
+    "source": {
+      "type": "npm",
+      "package": "@modelcontextprotocol/server-linear",
+      "repository": "https://github.com/modelcontextprotocol/servers"
+    },
+    "runtime": {
+      "type": "node",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-linear"]
+    },
+    "transport": "stdio",
+    "permissions": {
+      "network": ["api.linear.app:443"],
+      "env": ["LINEAR_API_KEY"],
+      "filesystem": [],
+      "exec": []
+    },
+    "config": {
+      "required": [
+        { "key": "api-key", "env": "LINEAR_API_KEY", "description": "Linear API key", "sensitive": true }
+      ],
+      "optional": []
+    },
+    "compatibility": {
+      "clients": ["claude-desktop", "cursor", "windsurf", "continue", "vscode", "generic"],
+      "platforms": ["macos", "linux", "windows"]
+    },
+    "quality": {
+      "securityScan": "pass",
+      "healthCheck": true,
+      "lastVerified": "2026-02-21",
+      "downloads": 4120
+    },
+    "category": "productivity",
+    "tags": ["linear", "issues", "project-management", "tracking"],
+    "maintainer": "Community",
+    "trustLevel": "community"
+  },
+  {
+    "name": "gitlab",
+    "displayName": "GitLab MCP Server",
+    "description": "Access GitLab projects, issues, merge requests, and pipelines",
+    "version": "0.8.0",
+    "source": {
+      "type": "npm",
+      "package": "@modelcontextprotocol/server-gitlab",
+      "repository": "https://github.com/modelcontextprotocol/servers"
+    },
+    "runtime": {
+      "type": "node",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-gitlab"]
+    },
+    "transport": "stdio",
+    "permissions": {
+      "network": ["gitlab.com:443"],
+      "env": ["GITLAB_TOKEN"],
+      "filesystem": [],
+      "exec": ["git"]
+    },
+    "config": {
+      "required": [
+        { "key": "token", "env": "GITLAB_TOKEN", "description": "GitLab personal access token", "sensitive": true }
+      ],
+      "optional": [
+        { "key": "base-url", "description": "GitLab base URL", "default": "https://gitlab.com" }
+      ]
+    },
+    "compatibility": {
+      "clients": ["claude-desktop", "cursor", "windsurf", "continue", "vscode", "generic"],
+      "platforms": ["macos", "linux", "windows"]
+    },
+    "quality": {
+      "securityScan": "pass",
+      "healthCheck": true,
+      "lastVerified": "2026-02-21",
+      "downloads": 4630
+    },
+    "category": "developer-tools",
+    "tags": ["gitlab", "git", "merge-requests", "pipelines"],
+    "maintainer": "Community",
+    "trustLevel": "community"
+  },
+  {
+    "name": "sentry",
+    "displayName": "Sentry MCP Server",
+    "description": "Inspect Sentry issues, alerts, and project error trends",
+    "version": "0.6.1",
+    "source": {
+      "type": "npm",
+      "package": "@modelcontextprotocol/server-sentry",
+      "repository": "https://github.com/modelcontextprotocol/servers"
+    },
+    "runtime": {
+      "type": "node",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sentry"]
+    },
+    "transport": "stdio",
+    "permissions": {
+      "network": ["sentry.io:443"],
+      "env": ["SENTRY_AUTH_TOKEN"],
+      "filesystem": [],
+      "exec": []
+    },
+    "config": {
+      "required": [
+        { "key": "auth-token", "env": "SENTRY_AUTH_TOKEN", "description": "Sentry auth token", "sensitive": true }
+      ],
+      "optional": [
+        { "key": "organization", "description": "Sentry organization slug", "default": null }
+      ]
+    },
+    "compatibility": {
+      "clients": ["claude-desktop", "cursor", "windsurf", "continue", "vscode", "generic"],
+      "platforms": ["macos", "linux", "windows"]
+    },
+    "quality": {
+      "securityScan": "pass",
+      "healthCheck": true,
+      "lastVerified": "2026-02-21",
+      "downloads": 3480
+    },
+    "category": "developer-tools",
+    "tags": ["sentry", "monitoring", "errors", "observability"],
+    "maintainer": "Community",
+    "trustLevel": "community"
+  },
+  {
+    "name": "datadog",
+    "displayName": "Datadog MCP Server",
+    "description": "Query Datadog metrics, traces, dashboards, and monitors",
+    "version": "0.6.0",
+    "source": {
+      "type": "npm",
+      "package": "@modelcontextprotocol/server-datadog",
+      "repository": "https://github.com/modelcontextprotocol/servers"
+    },
+    "runtime": {
+      "type": "node",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-datadog"]
+    },
+    "transport": "stdio",
+    "permissions": {
+      "network": ["api.datadoghq.com:443"],
+      "env": ["DATADOG_API_KEY", "DATADOG_APP_KEY"],
+      "filesystem": [],
+      "exec": []
+    },
+    "config": {
+      "required": [
+        { "key": "api-key", "env": "DATADOG_API_KEY", "description": "Datadog API key", "sensitive": true },
+        { "key": "app-key", "env": "DATADOG_APP_KEY", "description": "Datadog app key", "sensitive": true }
+      ],
+      "optional": [
+        { "key": "site", "description": "Datadog site", "default": "datadoghq.com" }
+      ]
+    },
+    "compatibility": {
+      "clients": ["claude-desktop", "cursor", "windsurf", "continue", "vscode", "generic"],
+      "platforms": ["macos", "linux", "windows"]
+    },
+    "quality": {
+      "securityScan": "pass",
+      "healthCheck": true,
+      "lastVerified": "2026-02-21",
+      "downloads": 3710
+    },
+    "category": "developer-tools",
+    "tags": ["datadog", "monitoring", "metrics", "observability"],
+    "maintainer": "Community",
+    "trustLevel": "community"
   }
 ]

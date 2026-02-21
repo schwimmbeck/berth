@@ -45,7 +45,7 @@ mod tests {
     #[test]
     fn registry_from_seed() {
         let registry = Registry::from_seed();
-        assert_eq!(registry.list_all().len(), 15);
+        assert_eq!(registry.list_all().len(), 20);
     }
 
     #[test]

@@ -458,6 +458,17 @@ fn route_request(request: &HttpRequest, registry: &Registry, state: &ApiState) -
             }
             route_server_filters(registry)
         }
+        "/servers/facets" => {
+            if method != "GET" {
+                return (
+                    405,
+                    json!({
+                        "error": "method not allowed"
+                    }),
+                );
+            }
+            route_servers_facets(query, registry)
+        }
         "/servers/suggest" => {
             if method != "GET" {
                 return (
@@ -693,6 +704,94 @@ fn route_server_filters(registry: &Registry) -> (u16, Value) {
             "trustLevels": trust_levels.into_iter().collect::<Vec<_>>()
         }),
     )
+}
+
+fn route_servers_facets(query: Option<&str>, registry: &Registry) -> (u16, Value) {
+    let query_value = query_param(query, "q")
+        .or_else(|| query_param(query, "query"))
+        .unwrap_or_default();
+    let category_filter = query_param(query, "category").filter(|v| !v.trim().is_empty());
+    let platform_filter = query_param(query, "platform").filter(|v| !v.trim().is_empty());
+    let trust_filter = query_param(query, "trustLevel")
+        .or_else(|| query_param(query, "trust_level"))
+        .filter(|v| !v.trim().is_empty());
+
+    let entries: Vec<&ServerMetadata> = if query_value.trim().is_empty() {
+        registry.list_all().iter().collect()
+    } else {
+        registry
+            .search(query_value)
+            .into_iter()
+            .map(|result| result.server)
+            .collect()
+    };
+
+    let total = entries
+        .iter()
+        .filter(|server| {
+            matches_server_filters(server, category_filter, platform_filter, trust_filter)
+        })
+        .count();
+
+    let mut category_counts = std::collections::BTreeMap::<String, u64>::new();
+    for server in entries
+        .iter()
+        .filter(|server| matches_server_filters(server, None, platform_filter, trust_filter))
+    {
+        *category_counts.entry(server.category.clone()).or_insert(0) += 1;
+    }
+
+    let mut platform_counts = std::collections::BTreeMap::<String, u64>::new();
+    for server in entries
+        .iter()
+        .filter(|server| matches_server_filters(server, category_filter, None, trust_filter))
+    {
+        for platform in &server.compatibility.platforms {
+            *platform_counts.entry(platform.clone()).or_insert(0) += 1;
+        }
+    }
+
+    let mut trust_counts = std::collections::BTreeMap::<String, u64>::new();
+    for server in entries
+        .iter()
+        .filter(|server| matches_server_filters(server, category_filter, platform_filter, None))
+    {
+        *trust_counts
+            .entry(server.trust_level.to_string())
+            .or_insert(0) += 1;
+    }
+
+    (
+        200,
+        json!({
+            "query": query_value,
+            "filters": {
+                "category": category_filter,
+                "platform": platform_filter,
+                "trustLevel": trust_filter
+            },
+            "total": total,
+            "facets": {
+                "categories": sorted_facet_items(category_counts),
+                "platforms": sorted_facet_items(platform_counts),
+                "trustLevels": sorted_facet_items(trust_counts)
+            }
+        }),
+    )
+}
+
+fn sorted_facet_items(counts: std::collections::BTreeMap<String, u64>) -> Vec<Value> {
+    let mut items = counts.into_iter().collect::<Vec<_>>();
+    items.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    items
+        .into_iter()
+        .map(|(value, count)| {
+            json!({
+                "value": value,
+                "count": count
+            })
+        })
+        .collect()
 }
 
 fn route_servers_suggest(
@@ -2189,6 +2288,34 @@ mod tests {
             route_request(&req("GET", "/servers/suggest?limit=3"), &registry, &state);
         assert_eq!(empty_status, 200);
         assert_eq!(empty_body["count"].as_u64(), Some(3));
+    }
+
+    #[test]
+    fn route_request_supports_facets_endpoint() {
+        let registry = Registry::from_seed();
+        let state = test_state();
+
+        let (status, body) = route_request(
+            &req("GET", "/servers/facets?q=git&platform=macos"),
+            &registry,
+            &state,
+        );
+        assert_eq!(status, 200);
+        assert_eq!(body["query"].as_str(), Some("git"));
+        assert!(body["total"].as_u64().unwrap_or(0) >= 1);
+
+        let categories = body["facets"]["categories"].as_array().unwrap();
+        assert!(categories
+            .iter()
+            .any(|item| item["value"].as_str() == Some("developer-tools")));
+        let platforms = body["facets"]["platforms"].as_array().unwrap();
+        assert!(platforms
+            .iter()
+            .any(|item| item["value"].as_str() == Some("macos")));
+        let trust_levels = body["facets"]["trustLevels"].as_array().unwrap();
+        assert!(trust_levels
+            .iter()
+            .any(|item| item["count"].as_u64().unwrap_or(0) >= 1));
     }
 
     #[test]

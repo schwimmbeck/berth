@@ -566,7 +566,7 @@ fn registry_api_serves_health_search_and_downloads() {
             "--bind",
             "127.0.0.1:0",
             "--max-requests",
-            "18",
+            "19",
         ])
         .stdout(Stdio::piped())
         .spawn()
@@ -646,6 +646,17 @@ fn registry_api_serves_health_search_and_downloads() {
         .unwrap()
         .iter()
         .any(|server| server["name"].as_str() == Some("github")));
+
+    let (facets_status, facets_body) = http_get(&addr, "/servers/facets?q=git&platform=macos");
+    assert_eq!(facets_status, 200);
+    let facets: serde_json::Value = serde_json::from_str(&facets_body).unwrap();
+    assert_eq!(facets["query"].as_str(), Some("git"));
+    assert!(facets["total"].as_u64().unwrap_or(0) >= 1);
+    assert!(facets["facets"]["categories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["value"].as_str() == Some("developer-tools")));
 
     let (downloads_status, downloads_body) = http_get(&addr, "/servers/github/downloads");
     assert_eq!(downloads_status, 200);

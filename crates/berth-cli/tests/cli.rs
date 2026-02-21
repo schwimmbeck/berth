@@ -566,7 +566,7 @@ fn registry_api_serves_health_search_and_downloads() {
             "--bind",
             "127.0.0.1:0",
             "--max-requests",
-            "17",
+            "18",
         ])
         .stdout(Stdio::piped())
         .spawn()
@@ -635,6 +635,17 @@ fn registry_api_serves_health_search_and_downloads() {
     let mut expected = names.clone();
     expected.sort();
     assert_eq!(names, expected);
+
+    let (suggest_status, suggest_body) = http_get(&addr, "/servers/suggest?q=git&limit=4");
+    assert_eq!(suggest_status, 200);
+    let suggest: serde_json::Value = serde_json::from_str(&suggest_body).unwrap();
+    assert_eq!(suggest["query"].as_str(), Some("git"));
+    assert!(suggest["count"].as_u64().unwrap_or(0) >= 1);
+    assert!(suggest["servers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|server| server["name"].as_str() == Some("github")));
 
     let (downloads_status, downloads_body) = http_get(&addr, "/servers/github/downloads");
     assert_eq!(downloads_status, 200);

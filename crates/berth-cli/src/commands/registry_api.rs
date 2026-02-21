@@ -458,6 +458,17 @@ fn route_request(request: &HttpRequest, registry: &Registry, state: &ApiState) -
             }
             route_server_filters(registry)
         }
+        "/servers/suggest" => {
+            if method != "GET" {
+                return (
+                    405,
+                    json!({
+                        "error": "method not allowed"
+                    }),
+                );
+            }
+            route_servers_suggest(query, registry, state)
+        }
         "/stats" => {
             if method != "GET" {
                 return (
@@ -680,6 +691,133 @@ fn route_server_filters(registry: &Registry) -> (u16, Value) {
             "categories": categories.into_iter().collect::<Vec<_>>(),
             "platforms": platforms.into_iter().collect::<Vec<_>>(),
             "trustLevels": trust_levels.into_iter().collect::<Vec<_>>()
+        }),
+    )
+}
+
+fn route_servers_suggest(
+    query: Option<&str>,
+    registry: &Registry,
+    state: &ApiState,
+) -> (u16, Value) {
+    let raw_query = query_param(query, "q")
+        .or_else(|| query_param(query, "query"))
+        .unwrap_or_default();
+    let normalized_query = raw_query.trim().to_lowercase();
+    let category_filter = query_param(query, "category")
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let limit = parse_usize_param(query, "limit").unwrap_or(8).min(25);
+    let verified_publishers = state.list_verified_publishers().unwrap_or_default();
+
+    let mut suggestions = registry
+        .list_all()
+        .iter()
+        .filter(|server| {
+            category_filter.is_none_or(|category| server.category.eq_ignore_ascii_case(category))
+        })
+        .filter_map(|server| {
+            let name = server.name.to_lowercase();
+            let display_name = server.display_name.to_lowercase();
+            let maintainer = server.maintainer.to_lowercase();
+            let tags = server
+                .tags
+                .iter()
+                .map(|tag| tag.to_lowercase())
+                .collect::<Vec<_>>();
+            let category = server.category.to_lowercase();
+            let mut score: i32 = 0;
+
+            if normalized_query.is_empty() {
+                score += 10;
+            } else {
+                if name == normalized_query {
+                    score += 220;
+                } else if name.starts_with(&normalized_query) {
+                    score += 140;
+                } else if name.contains(&normalized_query) {
+                    score += 90;
+                }
+
+                if display_name.starts_with(&normalized_query) {
+                    score += 80;
+                } else if display_name.contains(&normalized_query) {
+                    score += 55;
+                }
+
+                if maintainer.contains(&normalized_query) {
+                    score += 35;
+                }
+                if category.contains(&normalized_query) {
+                    score += 20;
+                }
+
+                for tag in tags {
+                    if tag.starts_with(&normalized_query) {
+                        score += 40;
+                    } else if tag.contains(&normalized_query) {
+                        score += 20;
+                    }
+                }
+            }
+
+            if score == 0 {
+                return None;
+            }
+
+            let (stars, reports) = state.community_counts(&server.name).unwrap_or((0, 0));
+            let maintainer_verified =
+                is_maintainer_verified(&server.maintainer, &verified_publishers);
+            let quality_score = server_quality_score(server, maintainer_verified, stars, reports);
+
+            score += (quality_score / 8) as i32;
+            score += match server.quality.downloads {
+                0..=999 => 2,
+                1000..=9999 => 4,
+                _ => 6,
+            };
+
+            Some((server, score, quality_score, maintainer_verified))
+        })
+        .collect::<Vec<_>>();
+
+    suggestions.sort_by(|left, right| {
+        right
+            .1
+            .cmp(&left.1)
+            .then_with(|| right.2.cmp(&left.2))
+            .then_with(|| right.0.quality.downloads.cmp(&left.0.quality.downloads))
+            .then_with(|| left.0.name.cmp(&right.0.name))
+    });
+
+    let servers = suggestions
+        .into_iter()
+        .take(limit)
+        .map(|(server, score, quality_score, maintainer_verified)| {
+            json!({
+                "name": server.name,
+                "displayName": server.display_name,
+                "category": server.category,
+                "maintainer": server.maintainer,
+                "maintainerVerified": maintainer_verified,
+                "trustLevel": server.trust_level.to_string(),
+                "qualityScore": quality_score,
+                "installCommand": format!("berth install {}", server.name),
+                "score": score
+            })
+        })
+        .collect::<Vec<_>>();
+
+    (
+        200,
+        json!({
+            "query": raw_query,
+            "filters": {
+                "category": category_filter
+            },
+            "count": servers.len(),
+            "limit": limit,
+            "servers": servers
         }),
     )
 }
@@ -2024,6 +2162,33 @@ mod tests {
 
         let maintainers = body["top"]["maintainers"].as_array().unwrap();
         assert!(!maintainers.is_empty());
+    }
+
+    #[test]
+    fn route_request_supports_suggest_endpoint() {
+        let registry = Registry::from_seed();
+        let state = test_state();
+
+        let (status, body) = route_request(
+            &req("GET", "/servers/suggest?q=git&limit=5"),
+            &registry,
+            &state,
+        );
+        assert_eq!(status, 200);
+        assert_eq!(body["query"].as_str(), Some("git"));
+        assert!(body["count"].as_u64().unwrap_or(0) >= 1);
+        let servers = body["servers"].as_array().unwrap();
+        assert!(servers
+            .iter()
+            .any(|server| server["name"].as_str() == Some("github")));
+        assert!(servers
+            .iter()
+            .all(|server| server["installCommand"].as_str().is_some()));
+
+        let (empty_status, empty_body) =
+            route_request(&req("GET", "/servers/suggest?limit=3"), &registry, &state);
+        assert_eq!(empty_status, 200);
+        assert_eq!(empty_body["count"].as_u64(), Some(3));
     }
 
     #[test]

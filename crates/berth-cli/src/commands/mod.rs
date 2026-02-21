@@ -117,6 +117,14 @@ pub enum Commands {
         /// Revoke a permission
         #[arg(long)]
         revoke: Option<String>,
+
+        /// Clear all local permission overrides
+        #[arg(long)]
+        reset: bool,
+
+        /// Export declared/overrides/effective permissions as JSON
+        #[arg(long = "export")]
+        export_json: bool,
     },
 
     /// Show audit log of MCP tool calls
@@ -167,7 +175,15 @@ pub fn execute(command: Commands) {
             server,
             grant,
             revoke,
-        } => permissions::execute(&server, grant.as_deref(), revoke.as_deref()),
+            reset,
+            export_json,
+        } => permissions::execute(
+            &server,
+            grant.as_deref(),
+            revoke.as_deref(),
+            reset,
+            export_json,
+        ),
         Commands::Audit { server, since } => audit::execute(server.as_deref(), since.as_deref()),
         Commands::Link { client } => link::execute(&client),
         Commands::Unlink { client } => unlink::execute(&client),

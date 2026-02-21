@@ -78,7 +78,7 @@ berth restart <server>         Restart an MCP server
 berth status                   Show MCP server status
 berth logs <server>            Show recent MCP server logs
 
-berth permissions <server>     Show/manage MCP server permission overrides
+berth permissions <server>     Show/manage/export MCP server permissions (--grant/--revoke/--reset/--export)
 berth audit [server]           View runtime audit log (supports --since)
 berth link <client>            Link Berth-managed servers to claude-desktop, cursor, or windsurf
 berth unlink <client>          Unlink Berth-managed servers from claude-desktop, cursor, or windsurf

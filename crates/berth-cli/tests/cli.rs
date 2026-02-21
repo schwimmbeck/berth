@@ -839,6 +839,82 @@ fn permissions_grant_and_revoke_persist_overrides() {
 }
 
 #[test]
+fn permissions_reset_clears_overrides() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+
+    berth_with_home(tmp.path())
+        .args([
+            "permissions",
+            "github",
+            "--grant",
+            "network:example.com:443",
+        ])
+        .output()
+        .unwrap();
+
+    let reset = berth_with_home(tmp.path())
+        .args(["permissions", "github", "--reset"])
+        .output()
+        .unwrap();
+    assert!(reset.status.success());
+
+    let show = berth_with_home(tmp.path())
+        .args(["permissions", "github"])
+        .output()
+        .unwrap();
+    assert!(show.status.success());
+    let stdout = String::from_utf8_lossy(&show.stdout);
+    assert!(!stdout.contains("network:example.com:443"));
+}
+
+#[test]
+fn permissions_export_outputs_json() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args([
+            "permissions",
+            "github",
+            "--grant",
+            "network:example.com:443",
+        ])
+        .output()
+        .unwrap();
+
+    let output = berth_with_home(tmp.path())
+        .args(["permissions", "github", "--export"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+    assert_eq!(json["server"].as_str(), Some("github"));
+    assert!(json["declared"]["network"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v.as_str() == Some("api.github.com:443")));
+    assert!(json["overrides"]["grant"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v.as_str() == Some("network:example.com:443")));
+    assert!(json["effective"]["network"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v.as_str() == Some("example.com:443")));
+}
+
+#[test]
 fn audit_shows_runtime_events_for_server() {
     let tmp = tempfile::tempdir().unwrap();
     berth_with_home(tmp.path())

@@ -2,23 +2,58 @@
 
 use berth_registry::config::InstalledServer;
 use colored::Colorize;
+use serde::Serialize;
 use std::fs;
 use std::path::Path;
 use std::process;
 
 use crate::paths;
 use crate::permission_filter::{
-    effective_permissions, load_permission_overrides, write_permission_overrides,
+    clear_permission_overrides, effective_permissions, load_permission_overrides,
+    write_permission_overrides,
 };
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PermissionExport {
+    server: String,
+    declared: ScopedPermissions,
+    overrides: OverrideLists,
+    effective: ScopedPermissions,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ScopedPermissions {
+    network: Vec<String>,
+    env: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OverrideLists {
+    grant: Vec<String>,
+    revoke: Vec<String>,
+}
+
 /// Executes the `berth permissions` command.
-pub fn execute(server: &str, grant: Option<&str>, revoke: Option<&str>) {
-    if grant.is_some() && revoke.is_some() {
+pub fn execute(
+    server: &str,
+    grant: Option<&str>,
+    revoke: Option<&str>,
+    reset: bool,
+    export_json: bool,
+) {
+    let action_count =
+        grant.is_some() as u8 + revoke.is_some() as u8 + reset as u8 + export_json as u8;
+    if action_count > 1 {
         eprintln!(
-            "{} Use either {} or {}, not both.",
+            "{} Use only one of {}, {}, {}, or {}.",
             "✗".red().bold(),
             "--grant".bold(),
-            "--revoke".bold()
+            "--revoke".bold(),
+            "--reset".bold(),
+            "--export".bold()
         );
         process::exit(1);
     }
@@ -93,6 +128,19 @@ pub fn execute(server: &str, grant: Option<&str>, revoke: Option<&str>) {
         return;
     }
 
+    if reset {
+        if let Err(msg) = clear_permission_overrides(server) {
+            eprintln!("{} {}", "✗".red().bold(), msg);
+            process::exit(1);
+        }
+        println!(
+            "{} Cleared permission overrides for {}.",
+            "✓".green().bold(),
+            server.cyan()
+        );
+        return;
+    }
+
     let overrides = match load_permission_overrides(server) {
         Ok(o) => o,
         Err(msg) => {
@@ -104,6 +152,37 @@ pub fn execute(server: &str, grant: Option<&str>, revoke: Option<&str>) {
     let effective_network =
         effective_permissions("network", &installed.permissions.network, &overrides);
     let effective_env = effective_permissions("env", &installed.permissions.env, &overrides);
+
+    if export_json {
+        let export = PermissionExport {
+            server: server.to_string(),
+            declared: ScopedPermissions {
+                network: installed.permissions.network.clone(),
+                env: installed.permissions.env.clone(),
+            },
+            overrides: OverrideLists {
+                grant: overrides.grant.clone(),
+                revoke: overrides.revoke.clone(),
+            },
+            effective: ScopedPermissions {
+                network: effective_network,
+                env: effective_env,
+            },
+        };
+        let rendered = match serde_json::to_string_pretty(&export) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!(
+                    "{} Failed to serialize export JSON: {}",
+                    "✗".red().bold(),
+                    e
+                );
+                process::exit(1);
+            }
+        };
+        println!("{rendered}");
+        return;
+    }
 
     println!(
         "{} Permissions for {}:\n",

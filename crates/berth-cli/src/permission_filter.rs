@@ -47,6 +47,16 @@ pub fn write_permission_overrides(
     fs::write(path, rendered).map_err(|e| format!("Failed to write overrides: {e}"))
 }
 
+/// Clears persisted permission overrides for a server.
+pub fn clear_permission_overrides(server: &str) -> Result<(), String> {
+    let path =
+        paths::permissions_override_path(server).ok_or("Could not determine home directory.")?;
+    if !path.exists() {
+        return Ok(());
+    }
+    fs::remove_file(path).map_err(|e| format!("Failed to clear overrides: {e}"))
+}
+
 /// Computes effective permissions of one prefix (`env` or `network`).
 pub fn effective_permissions(
     prefix: &str,

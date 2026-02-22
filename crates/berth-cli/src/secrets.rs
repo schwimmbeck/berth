@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Schwimmbeck Dominik
 
 //! Secret storage helpers for optional secure config values.
 

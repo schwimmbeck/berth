@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Schwimmbeck Dominik
 
 //! Installed server configuration model persisted by the CLI.
 

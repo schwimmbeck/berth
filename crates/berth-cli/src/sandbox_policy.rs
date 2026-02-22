@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Schwimmbeck Dominik
 
 //! Helpers for parsing and validating basic sandbox policy settings.
 

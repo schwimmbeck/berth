@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Schwimmbeck Dominik
 
 //! Runtime helpers that adapt process launch for sandbox policies.
 

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Schwimmbeck Dominik
 
 //! Synchronous runtime state manager for installed MCP servers.
 

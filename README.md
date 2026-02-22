@@ -246,6 +246,9 @@ cargo run -- info github
 # Lint (zero warnings policy)
 cargo clippy --workspace --all-targets -- -D warnings
 
+# License/compliance checks
+cargo deny check
+
 # Format
 cargo fmt --all
 

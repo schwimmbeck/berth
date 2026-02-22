@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Installed server configuration model persisted by the CLI.
 
 use serde::{Deserialize, Serialize};

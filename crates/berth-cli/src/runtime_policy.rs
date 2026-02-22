@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Helpers for parsing and validating runtime auto-restart policy settings.
 
 use std::collections::BTreeMap;

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Core registry metadata types parsed from seed JSON.
 
 use serde::{Deserialize, Serialize};

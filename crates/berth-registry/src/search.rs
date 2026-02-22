@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Search and ranking helpers for registry servers.
 
 use crate::types::ServerMetadata;

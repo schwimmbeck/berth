@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Runtime helpers that adapt process launch for sandbox policies.
 
 use std::collections::BTreeMap;

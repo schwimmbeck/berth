@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Registry loading and query APIs for Berth.
 
 pub mod config;

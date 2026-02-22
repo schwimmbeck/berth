@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Secret storage helpers for optional secure config values.
 
 use serde::{Deserialize, Serialize};

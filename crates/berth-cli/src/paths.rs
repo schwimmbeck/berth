@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Path helpers for Berth config, runtime, and client integration files.
 
 use std::path::PathBuf;

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Command handler for `berth link`.
 
 use colored::Colorize;

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Command handler for `berth update`.
 
 use berth_registry::config::InstalledServer;

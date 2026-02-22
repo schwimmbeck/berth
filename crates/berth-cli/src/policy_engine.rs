@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Organization-wide policy enforcement for runtime launches.
 
 use berth_registry::config::PermissionsInfo;

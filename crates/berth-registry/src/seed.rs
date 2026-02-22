@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Embedded seed registry loader.
 
 use crate::types::ServerMetadata;

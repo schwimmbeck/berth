@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Helpers for parsing and validating basic sandbox policy settings.
 
 use std::collections::BTreeMap;

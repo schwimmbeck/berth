@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Synchronous runtime state manager for installed MCP servers.
 
 use serde::{Deserialize, Serialize};

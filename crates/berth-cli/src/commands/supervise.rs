@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Internal command handler for `berth __supervise`.
 
 use colored::Colorize;

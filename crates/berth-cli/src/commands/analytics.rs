@@ -4,6 +4,7 @@ use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::path::Path;
 use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -17,23 +18,23 @@ struct AuditEvent {
     action: String,
 }
 
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Serialize, PartialEq, Clone)]
 #[serde(rename_all = "camelCase")]
-struct CountStat {
-    value: String,
-    count: u64,
+pub struct CountStat {
+    pub value: String,
+    pub count: u64,
 }
 
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Serialize, PartialEq, Clone)]
 #[serde(rename_all = "camelCase")]
-struct AnalyticsSummary {
-    total_events: u64,
-    unique_servers: u64,
-    estimated_cost_usd: f64,
-    earliest_event_epoch_secs: Option<u64>,
-    latest_event_epoch_secs: Option<u64>,
-    top_actions: Vec<CountStat>,
-    top_servers: Vec<CountStat>,
+pub struct AnalyticsSummary {
+    pub total_events: u64,
+    pub unique_servers: u64,
+    pub estimated_cost_usd: f64,
+    pub earliest_event_epoch_secs: Option<u64>,
+    pub latest_event_epoch_secs: Option<u64>,
+    pub top_actions: Vec<CountStat>,
+    pub top_servers: Vec<CountStat>,
 }
 
 /// Executes the `berth analytics` command.
@@ -69,43 +70,13 @@ pub fn execute(server: Option<&str>, since: Option<&str>, top: u32, json: bool) 
         return;
     }
 
-    let content = match fs::read_to_string(&path) {
+    let (summary, skipped) = match summarize_audit_log(&path, server, since_secs, top as usize) {
         Ok(v) => v,
-        Err(e) => {
-            eprintln!(
-                "{} Failed to read audit log {}: {}",
-                "✗".red().bold(),
-                path.display(),
-                e
-            );
+        Err(msg) => {
+            eprintln!("{} {}", "✗".red().bold(), msg);
             process::exit(1);
         }
     };
-
-    let cutoff = since_secs.map(|seconds| now_epoch_secs().saturating_sub(seconds));
-    let mut events = Vec::new();
-    let mut skipped = 0usize;
-
-    for line in content.lines().filter(|line| !line.trim().is_empty()) {
-        match serde_json::from_str::<AuditEvent>(line) {
-            Ok(event) => {
-                if let Some(server_name) = server {
-                    if event.server != server_name {
-                        continue;
-                    }
-                }
-                if let Some(epoch_cutoff) = cutoff {
-                    if event.timestamp_epoch_secs < epoch_cutoff {
-                        continue;
-                    }
-                }
-                events.push(event);
-            }
-            Err(_) => skipped += 1,
-        }
-    }
-
-    let summary = summarize_events(&events, top as usize);
     if json {
         match serde_json::to_string_pretty(&summary) {
             Ok(rendered) => println!("{rendered}"),
@@ -163,7 +134,7 @@ pub fn execute(server: Option<&str>, since: Option<&str>, top: u32, json: bool) 
     }
 }
 
-fn empty_summary(top: usize) -> AnalyticsSummary {
+pub fn empty_summary(top: usize) -> AnalyticsSummary {
     let _ = top;
     AnalyticsSummary {
         total_events: 0,
@@ -257,7 +228,7 @@ fn now_epoch_secs() -> u64 {
 }
 
 /// Parses `--since` values like `30s`, `10m`, `24h`, `7d`.
-fn parse_since(raw: &str) -> Result<u64, String> {
+pub(crate) fn parse_since(raw: &str) -> Result<u64, String> {
     if raw.len() < 2 {
         return Err("Invalid --since format. Use <number><s|m|h|d>.".to_string());
     }
@@ -274,6 +245,42 @@ fn parse_since(raw: &str) -> Result<u64, String> {
         _ => return Err("Invalid --since unit. Use s, m, h, or d.".to_string()),
     };
     Ok(value.saturating_mul(multiplier))
+}
+
+/// Reads and summarizes an audit JSONL file with optional server and time filters.
+pub fn summarize_audit_log(
+    path: &Path,
+    server: Option<&str>,
+    since_secs: Option<u64>,
+    top: usize,
+) -> Result<(AnalyticsSummary, usize), String> {
+    let content = fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read audit log {}: {e}", path.display()))?;
+
+    let cutoff = since_secs.map(|seconds| now_epoch_secs().saturating_sub(seconds));
+    let mut events = Vec::new();
+    let mut skipped = 0usize;
+
+    for line in content.lines().filter(|line| !line.trim().is_empty()) {
+        match serde_json::from_str::<AuditEvent>(line) {
+            Ok(event) => {
+                if let Some(server_name) = server {
+                    if event.server != server_name {
+                        continue;
+                    }
+                }
+                if let Some(epoch_cutoff) = cutoff {
+                    if event.timestamp_epoch_secs < epoch_cutoff {
+                        continue;
+                    }
+                }
+                events.push(event);
+            }
+            Err(_) => skipped += 1,
+        }
+    }
+
+    Ok((summarize_events(&events, top), skipped))
 }
 
 #[cfg(test)]

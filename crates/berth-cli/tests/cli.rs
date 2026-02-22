@@ -615,7 +615,7 @@ fn registry_api_serves_health_search_and_downloads() {
             "--bind",
             "127.0.0.1:0",
             "--max-requests",
-            "45",
+            "47",
         ])
         .stdout(Stdio::piped())
         .spawn()
@@ -679,6 +679,13 @@ fn registry_api_serves_health_search_and_downloads() {
     assert!(site_publishers_headers.contains("Content-Type: text/html; charset=utf-8"));
     assert!(site_publishers_body.contains("Publisher Verification"));
     assert!(site_publishers_body.contains("publisher-action-btn"));
+
+    let (site_analytics_status, site_analytics_headers, site_analytics_body) =
+        http_get_with_headers(&addr, "/site/analytics?top=3");
+    assert_eq!(site_analytics_status, 200);
+    assert!(site_analytics_headers.contains("Content-Type: text/html; charset=utf-8"));
+    assert!(site_analytics_body.contains("Usage Analytics"));
+    assert!(site_analytics_body.contains("Top Actions"));
 
     let (
         site_publisher_missing_status,
@@ -1078,6 +1085,16 @@ fn registry_api_serves_health_search_and_downloads() {
         .iter()
         .any(|item| item["value"].as_str() == Some("verified")
             && item["count"].as_u64().unwrap_or(0) >= 1));
+
+    let (analytics_status, analytics_body) = http_get(&addr, "/analytics?server=github&top=3");
+    assert_eq!(analytics_status, 200);
+    let analytics: serde_json::Value = serde_json::from_str(&analytics_body).unwrap();
+    assert!(analytics["summary"]["totalEvents"].as_u64().is_some());
+    assert!(analytics["summary"]["topActions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|item| item["value"].as_str().is_some()));
 
     let (badged_search_status, badged_search_body) = http_get(&addr, "/servers?q=github");
     assert_eq!(badged_search_status, 200);

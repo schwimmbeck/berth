@@ -14,6 +14,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use berth_registry::types::{ServerMetadata, TrustLevel};
 use berth_registry::Registry;
 
+use crate::commands::analytics::{empty_summary, parse_since, summarize_audit_log};
 use crate::paths;
 
 const MAX_REQUEST_BYTES: usize = 16 * 1024;
@@ -283,6 +284,18 @@ impl ApiState {
 
     fn report_path(&self, server: &str) -> PathBuf {
         self.reports_dir().join(format!("{server}.jsonl"))
+    }
+
+    fn berth_root_dir(&self) -> PathBuf {
+        self.publish_queue_dir
+            .parent()
+            .and_then(std::path::Path::parent)
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from(".berth"))
+    }
+
+    fn audit_log_path(&self) -> PathBuf {
+        self.berth_root_dir().join("audit").join("audit.jsonl")
     }
 
     fn publish_root_dir(&self) -> PathBuf {
@@ -870,7 +883,7 @@ fn now_epoch_secs() -> u64 {
         .as_secs()
 }
 
-/// Routes browser-facing local website paths (`/site`, `/site/reports`, `/site/submissions`, `/site/review-events`, `/site/publishers`, `/site/publishers/<maintainer>`, `/site/submissions/<id>`, `/site/servers/<name>`).
+/// Routes browser-facing local website paths (`/site`, `/site/reports`, `/site/submissions`, `/site/review-events`, `/site/publishers`, `/site/analytics`, `/site/publishers/<maintainer>`, `/site/submissions/<id>`, `/site/servers/<name>`).
 fn route_website_request(
     request: &HttpRequest,
     registry: &Registry,
@@ -896,6 +909,9 @@ fn route_website_request(
         }
         "/site/review-events" | "/site/review-events/" => {
             Some((200, render_site_review_events_page(query, state)))
+        }
+        "/site/analytics" | "/site/analytics/" => {
+            Some((200, render_site_analytics_page(query, state)))
         }
         _ => {
             if let Some(raw_maintainer) = path.strip_prefix("/site/publishers/") {
@@ -1233,6 +1249,7 @@ fn render_site_catalog_page(query: Option<&str>, registry: &Registry, state: &Ap
     content.push_str("<p><a href=\"/site/submissions\">Open publish review queue</a></p>");
     content.push_str("<p><a href=\"/site/review-events\">Open publish review event feed</a></p>");
     content.push_str("<p><a href=\"/site/publishers\">Open publisher verification</a></p>");
+    content.push_str("<p><a href=\"/site/analytics\">Open usage analytics</a></p>");
     content.push_str("</section>");
 
     content.push_str("<section class=\"panel\">");
@@ -2157,6 +2174,135 @@ fn render_site_review_events_page(query: Option<&str>, state: &ApiState) -> Stri
     content.push_str("</section>");
 
     render_site_shell("Berth Publish Review Events", &content)
+}
+
+/// Renders audit usage analytics at `/site/analytics`.
+fn render_site_analytics_page(query: Option<&str>, state: &ApiState) -> String {
+    let server_filter = query_param(query, "server")
+        .map(url_decode)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let since_filter = query_param(query, "since")
+        .map(url_decode)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let top = parse_usize_param(query, "top").unwrap_or(5).clamp(1, 25);
+
+    let mut analytics_query_pairs = vec![format!("top={top}")];
+    if let Some(server) = server_filter.as_deref() {
+        analytics_query_pairs.push(format!("server={}", url_encode(server)));
+    }
+    if let Some(since) = since_filter.as_deref() {
+        analytics_query_pairs.push(format!("since={}", url_encode(since)));
+    }
+    let analytics_query = analytics_query_pairs.join("&");
+    let (status, payload) = route_analytics(Some(&analytics_query), state);
+
+    let mut content = String::new();
+    content.push_str("<header class=\"hero\">");
+    content.push_str("<p class=\"kicker\"><a href=\"/site\">Back to catalog</a></p>");
+    content.push_str("<h1>Usage Analytics</h1>");
+    content.push_str(
+        "<p>Summarized runtime and proxy activity from local audit logs with an estimated runtime cost signal.</p>",
+    );
+    content.push_str("</header>");
+
+    content.push_str("<section class=\"panel\">");
+    content.push_str("<form class=\"filters\" method=\"GET\" action=\"/site/analytics\">");
+    content.push_str(
+        "<label>Server<input type=\"text\" name=\"server\" placeholder=\"github\" value=\"",
+    );
+    content.push_str(&html_escape(server_filter.as_deref().unwrap_or_default()));
+    content.push_str("\"></label>");
+    content
+        .push_str("<label>Since<input type=\"text\" name=\"since\" placeholder=\"24h\" value=\"");
+    content.push_str(&html_escape(since_filter.as_deref().unwrap_or_default()));
+    content.push_str("\"></label>");
+    content.push_str("<label>Top<input type=\"number\" min=\"1\" max=\"25\" name=\"top\" value=\"");
+    content.push_str(&top.to_string());
+    content.push_str("\"></label>");
+    content.push_str("<button type=\"submit\">Apply</button>");
+    content.push_str("</form>");
+    content.push_str("</section>");
+
+    if status != 200 {
+        content.push_str("<section class=\"panel\"><p class=\"empty\">Analytics are unavailable for the current query. Check `since` format (for example `1h` or `24h`).</p></section>");
+        return render_site_shell("Berth Usage Analytics", &content);
+    }
+
+    let summary = &payload["summary"];
+    let total_events = summary["totalEvents"].as_u64().unwrap_or(0);
+    let unique_servers = summary["uniqueServers"].as_u64().unwrap_or(0);
+    let estimated_cost = summary["estimatedCostUsd"].as_f64().unwrap_or(0.0);
+    let earliest = summary["earliestEventEpochSecs"].as_u64().unwrap_or(0);
+    let latest = summary["latestEventEpochSecs"].as_u64().unwrap_or(0);
+    let malformed_lines = payload["malformedLines"].as_u64().unwrap_or(0);
+    let top_actions = summary["topActions"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let top_servers = summary["topServers"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+
+    content.push_str("<section class=\"panel\">");
+    content.push_str("<h2>Summary</h2>");
+    content.push_str("<p class=\"meta\">");
+    content.push_str(&format!(
+        "<span>events {}</span><span>servers {}</span><span>estimated cost ${:.4}</span><span>malformed lines {}</span>",
+        total_events, unique_servers, estimated_cost, malformed_lines
+    ));
+    content.push_str("</p>");
+    if earliest > 0 && latest > 0 {
+        content.push_str(&format!(
+            "<p class=\"meta\"><span>range {} .. {}</span></p>",
+            earliest, latest
+        ));
+    }
+    content.push_str("</section>");
+
+    content.push_str("<section class=\"panel\">");
+    content.push_str("<h2>Top Actions</h2>");
+    if top_actions.is_empty() {
+        content.push_str("<p class=\"empty\">No matching actions.</p>");
+    } else {
+        content.push_str("<ul class=\"trending-list\">");
+        for action in top_actions {
+            let value = action["value"].as_str().unwrap_or_default();
+            let count = action["count"].as_u64().unwrap_or(0);
+            content.push_str(&format!(
+                "<li><span>{}</span> <span class=\"meta\">({})</span></li>",
+                html_escape(value),
+                count
+            ));
+        }
+        content.push_str("</ul>");
+    }
+    content.push_str("</section>");
+
+    content.push_str("<section class=\"panel\">");
+    content.push_str("<h2>Top Servers</h2>");
+    if top_servers.is_empty() {
+        content.push_str("<p class=\"empty\">No matching servers.</p>");
+    } else {
+        content.push_str("<ul class=\"trending-list\">");
+        for server in top_servers {
+            let value = server["value"].as_str().unwrap_or_default();
+            let count = server["count"].as_u64().unwrap_or(0);
+            let href = format!("/site/servers/{}", url_encode(value));
+            content.push_str(&format!(
+                "<li><a href=\"{}\">{}</a> <span class=\"meta\">({})</span></li>",
+                html_escape(&href),
+                html_escape(value),
+                count
+            ));
+        }
+        content.push_str("</ul>");
+    }
+    content.push_str("</section>");
+
+    render_site_shell("Berth Usage Analytics", &content)
 }
 
 /// Renders a publish-review queue page at `/site/submissions`.
@@ -3583,6 +3729,17 @@ fn route_request(request: &HttpRequest, registry: &Registry, state: &ApiState) -
             }
             route_reports(query, state)
         }
+        "/analytics" => {
+            if method != "GET" {
+                return (
+                    405,
+                    json!({
+                        "error": "method not allowed"
+                    }),
+                );
+            }
+            route_analytics(query, state)
+        }
         "/stats" => {
             if method != "GET" {
                 return (
@@ -4382,6 +4539,72 @@ fn route_publish_review_event_filters(state: &ApiState) -> (u16, Value) {
                 }),
             )
         }
+        Err(e) => (
+            500,
+            json!({
+                "error": "internal error",
+                "detail": e
+            }),
+        ),
+    }
+}
+
+fn route_analytics(query: Option<&str>, state: &ApiState) -> (u16, Value) {
+    let server_filter = query_param(query, "server")
+        .map(url_decode)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let since_filter = query_param(query, "since")
+        .map(url_decode)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let top = parse_usize_param(query, "top").unwrap_or(5).clamp(1, 25);
+
+    let since_secs = match since_filter.as_deref() {
+        Some(raw) => match parse_since(raw) {
+            Ok(value) => Some(value),
+            Err(detail) => {
+                return (
+                    400,
+                    json!({
+                        "error": "invalid since filter",
+                        "detail": detail
+                    }),
+                );
+            }
+        },
+        None => None,
+    };
+
+    let audit_log_path = state.audit_log_path();
+    if !audit_log_path.exists() {
+        return (
+            200,
+            json!({
+                "filters": {
+                    "server": server_filter,
+                    "since": since_filter,
+                    "top": top
+                },
+                "summary": empty_summary(top),
+                "malformedLines": 0
+            }),
+        );
+    }
+
+    match summarize_audit_log(&audit_log_path, server_filter.as_deref(), since_secs, top) {
+        Ok((summary, malformed_lines)) => (
+            200,
+            json!({
+                "filters": {
+                    "server": server_filter,
+                    "since": since_filter,
+                    "top": top
+                },
+                "summary": summary,
+                "malformedLines": malformed_lines
+            }),
+        ),
         Err(e) => (
             500,
             json!({
@@ -6069,6 +6292,25 @@ mod tests {
         std::fs::write(path, serde_json::to_string_pretty(&payload).unwrap()).unwrap();
     }
 
+    fn seed_audit_event(state: &ApiState, server: &str, action: &str, timestamp_epoch_secs: u64) {
+        let path = state.audit_log_path();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        let payload = json!({
+            "timestampEpochSecs": timestamp_epoch_secs,
+            "server": server,
+            "action": action
+        });
+        let mut out = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .unwrap();
+        use std::io::Write as _;
+        writeln!(out, "{}", serde_json::to_string(&payload).unwrap()).unwrap();
+    }
+
     fn req(method: &str, target: &str) -> HttpRequest {
         HttpRequest {
             method: method.to_string(),
@@ -6115,6 +6357,7 @@ mod tests {
         assert!(catalog.contains("/site/submissions"));
         assert!(catalog.contains("/site/review-events"));
         assert!(catalog.contains("/site/publishers"));
+        assert!(catalog.contains("/site/analytics"));
 
         let (detail_status, detail) =
             route_website_request(&req("GET", "/site/servers/github"), &registry, &state).unwrap();
@@ -6241,6 +6484,19 @@ mod tests {
         assert!(review_events_body.contains("/site/submissions/github-400.json"));
         assert!(review_events_body.contains("queue review ok"));
 
+        seed_audit_event(&state, "github", "start", 501);
+        seed_audit_event(&state, "github", "stop", 502);
+        let (analytics_status, analytics_body) = route_website_request(
+            &req("GET", "/site/analytics?server=github&top=3"),
+            &registry,
+            &state,
+        )
+        .unwrap();
+        assert_eq!(analytics_status, 200);
+        assert!(analytics_body.contains("Usage Analytics"));
+        assert!(analytics_body.contains("Top Actions"));
+        assert!(analytics_body.contains("start"));
+
         let (page_status, page_body) =
             route_website_request(&req("GET", "/site?limit=1&offset=1"), &registry, &state)
                 .unwrap();
@@ -6264,6 +6520,12 @@ mod tests {
             route_website_request(&req("GET", "/site/publishers/nope"), &registry, &state).unwrap();
         assert_eq!(publisher_not_found_status, 404);
         assert!(publisher_not_found_body.contains("Page Not Found"));
+
+        let (analytics_invalid_status, analytics_invalid_body) =
+            route_website_request(&req("GET", "/site/analytics?since=bad"), &registry, &state)
+                .unwrap();
+        assert_eq!(analytics_invalid_status, 200);
+        assert!(analytics_invalid_body.contains("Analytics are unavailable"));
 
         let (method_status, method_body) =
             route_website_request(&req("POST", "/site"), &registry, &state).unwrap();
@@ -6616,6 +6878,31 @@ mod tests {
             .iter()
             .any(|item| item["value"].as_str() == Some("github")
                 && item["count"].as_u64() == Some(1)));
+
+        seed_audit_event(&state, "github", "start", 1000);
+        seed_audit_event(&state, "github", "stop", 1001);
+        let (analytics_status, analytics_body) = route_request(
+            &req("GET", "/analytics?server=github&top=2"),
+            &registry,
+            &state,
+        );
+        assert_eq!(analytics_status, 200);
+        assert_eq!(analytics_body["summary"]["totalEvents"].as_u64(), Some(2));
+        assert_eq!(analytics_body["summary"]["uniqueServers"].as_u64(), Some(1));
+        assert!(
+            analytics_body["summary"]["estimatedCostUsd"]
+                .as_f64()
+                .unwrap_or(0.0)
+                > 0.0
+        );
+
+        let (analytics_invalid_status, analytics_invalid_body) =
+            route_request(&req("GET", "/analytics?since=bad"), &registry, &state);
+        assert_eq!(analytics_invalid_status, 400);
+        assert_eq!(
+            analytics_invalid_body["error"].as_str(),
+            Some("invalid since filter")
+        );
     }
 
     #[test]

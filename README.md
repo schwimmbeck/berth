@@ -120,6 +120,7 @@ Registry API endpoints:
 - `GET /servers/<name>/reports?limit=<n>&offset=<n>`
 - `GET /reports/filters`
 - `GET /reports?server=<name>&reason=<reason>&offset=<n>&limit=<n>`
+- `GET /analytics?server=<name>&since=<duration>&top=<n>`
 - `GET /publish/submissions?status=<status>&server=<name>&offset=<n>&limit=<n>`
 - `GET /publish/submissions/filters`
 - `GET /publish/submissions/<id>`
@@ -140,6 +141,7 @@ Registry API endpoints:
 - `GET /site/review-events` (HTML publish review event feed with `status`, `server`, `submission`, `limit`, `offset`)
 - `GET /site/publishers` (HTML publisher verification dashboard with `maintainer`, `verified`, `limit`, `offset`)
 - `GET /site/publishers/<maintainer>` (HTML publisher detail page with maintainer signals and server list)
+- `GET /site/analytics` (HTML usage analytics dashboard with `server`, `since`, and `top`)
 - `GET /site/submissions/<id>` (HTML submission detail with full manifest and quality checks)
 - `GET /site/servers/<name>` (HTML server detail page)
 - `OPTIONS <any-endpoint>` (browser preflight; CORS enabled)

@@ -70,6 +70,7 @@ Registry API endpoints:
 - `GET /publish/review-events/filters`
 - `GET /publishers` with optional `maintainer`, `verified`, `offset`, and `limit`
 - `GET /publishers/filters`
+- `GET /publishers/<maintainer>`
 - `POST /servers/<name>/star`
 - `POST /servers/<name>/report`
 - `GET /publishers/verified`
@@ -80,6 +81,7 @@ Registry API endpoints:
 - `GET /site/submissions` (HTML publish review queue with `status`, `server`, `limit`, `offset`)
 - `GET /site/review-events` (HTML publish review event feed with `status`, `server`, `submission`, `limit`, `offset`)
 - `GET /site/publishers` (HTML publisher verification dashboard with `maintainer`, `verified`, `limit`, `offset`)
+- `GET /site/publishers/<maintainer>` (HTML publisher detail page with maintainer signals and server list)
 - `GET /site/submissions/<id>` (HTML submission detail with manifest and quality checks)
 - `GET /site/servers/<name>` (HTML server detail page with install copy button and star/report controls)
 - `OPTIONS <endpoint>` for browser preflight (CORS)

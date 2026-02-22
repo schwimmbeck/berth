@@ -615,7 +615,7 @@ fn registry_api_serves_health_search_and_downloads() {
             "--bind",
             "127.0.0.1:0",
             "--max-requests",
-            "42",
+            "45",
         ])
         .stdout(Stdio::piped())
         .spawn()
@@ -679,6 +679,14 @@ fn registry_api_serves_health_search_and_downloads() {
     assert!(site_publishers_headers.contains("Content-Type: text/html; charset=utf-8"));
     assert!(site_publishers_body.contains("Publisher Verification"));
     assert!(site_publishers_body.contains("publisher-action-btn"));
+
+    let (
+        site_publisher_missing_status,
+        _site_publisher_missing_headers,
+        site_publisher_missing_body,
+    ) = http_get_with_headers(&addr, "/site/publishers/nope");
+    assert_eq!(site_publisher_missing_status, 404);
+    assert!(site_publisher_missing_body.contains("Page Not Found"));
 
     let (search_status, search_body) = http_get(&addr, "/servers?q=github");
     assert_eq!(search_status, 200);
@@ -1035,6 +1043,29 @@ fn registry_api_serves_health_search_and_downloads() {
         publishers["publishers"][0]["verified"].as_bool(),
         Some(true)
     );
+
+    let (publisher_detail_status, publisher_detail_body) = http_get(&addr, "/publishers/anthropic");
+    assert_eq!(publisher_detail_status, 200);
+    let publisher_detail: serde_json::Value = serde_json::from_str(&publisher_detail_body).unwrap();
+    assert_eq!(
+        publisher_detail["maintainerNormalized"].as_str(),
+        Some("anthropic")
+    );
+    assert_eq!(publisher_detail["verified"].as_bool(), Some(true));
+    assert!(publisher_detail["serverCount"].as_u64().unwrap_or(0) >= 1);
+    assert!(publisher_detail["servers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|server| server["qualityScore"].as_u64().is_some()));
+
+    let (site_publisher_detail_status, site_publisher_detail_headers, site_publisher_detail_body) =
+        http_get_with_headers(&addr, "/site/publishers/anthropic");
+    assert_eq!(site_publisher_detail_status, 200);
+    assert!(site_publisher_detail_headers.contains("Content-Type: text/html; charset=utf-8"));
+    assert!(site_publisher_detail_body.contains("Publisher Detail"));
+    assert!(site_publisher_detail_body.contains("Open servers in catalog"));
+    assert!(site_publisher_detail_body.contains("Mark unverified"));
 
     let (publisher_filters_status, publisher_filters_body) = http_get(&addr, "/publishers/filters");
     assert_eq!(publisher_filters_status, 200);

@@ -234,6 +234,37 @@ struct PublisherSummary {
     server_count: u64,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PublisherServerDetail {
+    name: String,
+    display_name: String,
+    category: String,
+    trust_level: String,
+    downloads: u64,
+    stars: u64,
+    reports: u64,
+    quality_score: u32,
+    install_command: String,
+    install_command_copy: String,
+    readme_url: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PublisherDetail {
+    maintainer: String,
+    maintainer_normalized: String,
+    verified: bool,
+    badges: Vec<String>,
+    server_count: u64,
+    stars_total: u64,
+    reports_total: u64,
+    downloads_total: u64,
+    average_quality_score: u32,
+    servers: Vec<PublisherServerDetail>,
+}
+
 impl ApiState {
     fn new(community_dir: PathBuf, publish_queue_dir: PathBuf) -> Self {
         Self {
@@ -839,7 +870,7 @@ fn now_epoch_secs() -> u64 {
         .as_secs()
 }
 
-/// Routes browser-facing local website paths (`/site`, `/site/reports`, `/site/submissions`, `/site/review-events`, `/site/publishers`, `/site/submissions/<id>`, `/site/servers/<name>`).
+/// Routes browser-facing local website paths (`/site`, `/site/reports`, `/site/submissions`, `/site/review-events`, `/site/publishers`, `/site/publishers/<maintainer>`, `/site/submissions/<id>`, `/site/servers/<name>`).
 fn route_website_request(
     request: &HttpRequest,
     registry: &Registry,
@@ -867,6 +898,16 @@ fn route_website_request(
             Some((200, render_site_review_events_page(query, state)))
         }
         _ => {
+            if let Some(raw_maintainer) = path.strip_prefix("/site/publishers/") {
+                if raw_maintainer.is_empty() || raw_maintainer.contains('/') {
+                    return Some((404, render_site_not_found_page(path)));
+                }
+                return Some(render_site_publisher_detail_page(
+                    raw_maintainer,
+                    registry,
+                    state,
+                ));
+            }
             if let Some(raw_submission_id) = path.strip_prefix("/site/submissions/") {
                 if raw_submission_id.is_empty() || raw_submission_id.contains('/') {
                     return Some((404, render_site_not_found_page(path)));
@@ -1692,6 +1733,7 @@ fn render_site_publishers_page(
                 "Mark verified"
             };
             let status_label = if verified { "verified" } else { "unverified" };
+            let detail_href = format!("/site/publishers/{}", url_encode(&maintainer_for_api));
             let search_href = build_site_catalog_path(&SiteCatalogUrlParams {
                 search_query: &maintainer_name,
                 category: None,
@@ -1704,11 +1746,12 @@ fn render_site_publishers_page(
             });
             content.push_str("<li>");
             content.push_str(&format!(
-                "<a href=\"{}\">{}</a> <span class=\"meta\">status {} · servers {}</span>",
-                html_escape(&search_href),
+                "<a href=\"{}\">{}</a> <span class=\"meta\">status {} · servers {}</span><p><a href=\"{}\">Open servers in catalog</a></p>",
+                html_escape(&detail_href),
                 html_escape(&maintainer_name),
                 status_label,
-                server_count
+                server_count,
+                html_escape(&search_href)
             ));
             content.push_str("<div class=\"community-actions\">");
             content.push_str(&format!(
@@ -1725,6 +1768,135 @@ fn render_site_publishers_page(
     content.push_str("</section>");
 
     render_site_shell("Berth Publisher Verification", &content)
+}
+
+/// Renders a single publisher detail page at `/site/publishers/<maintainer>`.
+fn render_site_publisher_detail_page(
+    raw_maintainer: &str,
+    registry: &Registry,
+    state: &ApiState,
+) -> (u16, String) {
+    let (status, payload) = route_publisher_detail(raw_maintainer, registry, state);
+    if status != 200 {
+        return (404, render_site_not_found_page(raw_maintainer));
+    }
+
+    let maintainer = payload["maintainer"].as_str().unwrap_or_default();
+    let maintainer_normalized = payload["maintainerNormalized"].as_str().unwrap_or_default();
+    let verified = payload["verified"].as_bool().unwrap_or(false);
+    let badges = payload["badges"].as_array().cloned().unwrap_or_default();
+    let server_count = payload["serverCount"].as_u64().unwrap_or(0);
+    let stars_total = payload["starsTotal"].as_u64().unwrap_or(0);
+    let reports_total = payload["reportsTotal"].as_u64().unwrap_or(0);
+    let downloads_total = payload["downloadsTotal"].as_u64().unwrap_or(0);
+    let average_quality_score = payload["averageQualityScore"].as_u64().unwrap_or(0);
+    let servers = payload["servers"].as_array().cloned().unwrap_or_default();
+    let action = if verified { "unverify" } else { "verify" };
+    let action_label = if verified {
+        "Mark unverified"
+    } else {
+        "Mark verified"
+    };
+    let maintainer_for_api = if maintainer_normalized.is_empty() {
+        maintainer
+    } else {
+        maintainer_normalized
+    };
+    let search_href = build_site_catalog_path(&SiteCatalogUrlParams {
+        search_query: maintainer,
+        category: None,
+        platform: None,
+        trust_level: None,
+        sort_by: SortBy::Name,
+        sort_order: SortOrder::Asc,
+        limit: 24,
+        offset: 0,
+    });
+
+    let mut content = String::new();
+    content.push_str("<header class=\"hero\">");
+    content.push_str("<p class=\"kicker\"><a href=\"/site/publishers\">Back to publishers</a></p>");
+    content.push_str("<h1>Publisher Detail</h1>");
+    content.push_str(&format!(
+        "<p><strong>{}</strong></p>",
+        html_escape(maintainer)
+    ));
+    content.push_str(&format!(
+        "<p><a href=\"{}\">Open servers in catalog</a></p>",
+        html_escape(&search_href)
+    ));
+    content.push_str("</header>");
+
+    content.push_str("<section class=\"panel\">");
+    content.push_str("<h2>Signals</h2>");
+    content.push_str("<p class=\"meta\">");
+    content.push_str(&format!(
+        "<span>status {}</span><span>servers {}</span><span>stars {}</span><span>reports {}</span><span>downloads {}</span><span>avg quality {}</span>",
+        if verified { "verified" } else { "unverified" },
+        server_count,
+        stars_total,
+        reports_total,
+        format_number(downloads_total),
+        average_quality_score
+    ));
+    if !badges.is_empty() {
+        for badge in badges {
+            if let Some(badge_value) = badge.as_str() {
+                content.push_str(&format!(
+                    "<span class=\"badge badge-verified\">{}</span>",
+                    html_escape(badge_value)
+                ));
+            }
+        }
+    }
+    content.push_str("</p>");
+    content.push_str("<div class=\"community-actions\">");
+    content.push_str(&format!(
+        "<button type=\"button\" class=\"publisher-action-btn\" data-action=\"{}\" data-maintainer=\"{}\">{}</button>",
+        action,
+        html_escape(maintainer_for_api),
+        action_label
+    ));
+    content.push_str("</div>");
+    content.push_str("</section>");
+
+    content.push_str("<section class=\"panel\">");
+    content.push_str("<h2>Servers</h2>");
+    if servers.is_empty() {
+        content.push_str(
+            "<p class=\"empty\">No servers are currently attributed to this maintainer.</p>",
+        );
+    } else {
+        content.push_str("<ul class=\"related-list\">");
+        for server in servers {
+            let name = server["name"].as_str().unwrap_or_default();
+            let display_name = server["displayName"].as_str().unwrap_or(name);
+            let category = server["category"].as_str().unwrap_or_default();
+            let trust_level = server["trustLevel"].as_str().unwrap_or_default();
+            let downloads = server["downloads"].as_u64().unwrap_or(0);
+            let stars = server["stars"].as_u64().unwrap_or(0);
+            let reports = server["reports"].as_u64().unwrap_or(0);
+            let quality = server["qualityScore"].as_u64().unwrap_or(0);
+            let server_href = format!("/site/servers/{}", url_encode(name));
+            content.push_str("<li>");
+            content.push_str(&format!(
+                "<a href=\"{}\">{}</a> <span class=\"meta\">{} · {} · quality {} · stars {} · reports {} · downloads {}</span>",
+                html_escape(&server_href),
+                html_escape(display_name),
+                html_escape(category),
+                html_escape(trust_level),
+                quality,
+                stars,
+                reports,
+                format_number(downloads)
+            ));
+            content.push_str("</li>");
+        }
+        content.push_str("</ul>");
+    }
+    content.push_str("</section>");
+
+    (200, render_site_shell("Berth Publisher Detail", &content))
 }
 
 /// Renders a publish review-event feed at `/site/review-events`.
@@ -3320,6 +3492,25 @@ fn route_request(request: &HttpRequest, registry: &Registry, state: &ApiState) -
         }
         return route_publish_submission_detail(raw_submission_id, state);
     }
+    if let Some(raw_maintainer) = path.strip_prefix("/publishers/") {
+        if !raw_maintainer.is_empty()
+            && !raw_maintainer.contains('/')
+            && !matches!(
+                raw_maintainer,
+                "filters" | "verified" | "verify" | "unverify"
+            )
+        {
+            if method != "GET" {
+                return (
+                    405,
+                    json!({
+                        "error": "method not allowed"
+                    }),
+                );
+            }
+            return route_publisher_detail(raw_maintainer, registry, state);
+        }
+    }
     match path {
         "/" | "/health" => {
             if method != "GET" {
@@ -4311,6 +4502,31 @@ fn route_publisher_filters(registry: &Registry, state: &ApiState) -> (u16, Value
                 }),
             )
         }
+        Err(e) => (
+            500,
+            json!({
+                "error": "internal error",
+                "detail": e
+            }),
+        ),
+    }
+}
+
+/// Routes `/publishers/<maintainer>` detail path.
+fn route_publisher_detail(
+    raw_maintainer: &str,
+    registry: &Registry,
+    state: &ApiState,
+) -> (u16, Value) {
+    match build_publisher_detail(raw_maintainer, registry, state) {
+        Ok(Some(detail)) => (200, json!(detail)),
+        Ok(None) => (
+            404,
+            json!({
+                "error": "publisher not found",
+                "maintainer": url_decode(raw_maintainer)
+            }),
+        ),
         Err(e) => (
             500,
             json!({
@@ -5463,6 +5679,85 @@ fn list_publishers(registry: &Registry, state: &ApiState) -> Result<Vec<Publishe
     Ok(publishers)
 }
 
+/// Resolves one publisher detail payload from local registry + community state.
+fn build_publisher_detail(
+    raw_maintainer: &str,
+    registry: &Registry,
+    state: &ApiState,
+) -> Result<Option<PublisherDetail>, String> {
+    let decoded_lookup = url_decode(raw_maintainer);
+    let normalized_lookup = normalize_maintainer(&decoded_lookup);
+    if normalized_lookup.is_empty() {
+        return Ok(None);
+    }
+
+    let publishers = list_publishers(registry, state)?;
+    let Some(publisher) = publishers
+        .into_iter()
+        .find(|item| item.maintainer_normalized == normalized_lookup)
+    else {
+        return Ok(None);
+    };
+
+    let mut servers = registry
+        .list_all()
+        .iter()
+        .filter(|server| {
+            normalize_maintainer(&server.maintainer) == publisher.maintainer_normalized
+        })
+        .map(|server| {
+            let (stars, reports) = state.community_counts(&server.name).unwrap_or((0, 0));
+            let quality_score = server_quality_score(server, publisher.verified, stars, reports);
+            PublisherServerDetail {
+                name: server.name.clone(),
+                display_name: server.display_name.clone(),
+                category: server.category.clone(),
+                trust_level: server.trust_level.to_string(),
+                downloads: server.quality.downloads,
+                stars,
+                reports,
+                quality_score,
+                install_command: format!("berth install {}", server.name),
+                install_command_copy: format!("berth install {}", server.name),
+                readme_url: readme_url_for_repository(&server.source.repository),
+            }
+        })
+        .collect::<Vec<_>>();
+
+    servers.sort_by(|left, right| {
+        right
+            .downloads
+            .cmp(&left.downloads)
+            .then_with(|| left.name.cmp(&right.name))
+    });
+
+    let stars_total = servers.iter().map(|server| server.stars).sum::<u64>();
+    let reports_total = servers.iter().map(|server| server.reports).sum::<u64>();
+    let downloads_total = servers.iter().map(|server| server.downloads).sum::<u64>();
+    let average_quality_score = if servers.is_empty() {
+        0
+    } else {
+        (servers
+            .iter()
+            .map(|server| server.quality_score as u64)
+            .sum::<u64>()
+            / servers.len() as u64) as u32
+    };
+
+    Ok(Some(PublisherDetail {
+        maintainer: publisher.maintainer,
+        maintainer_normalized: publisher.maintainer_normalized,
+        verified: publisher.verified,
+        badges: publisher_badges(publisher.verified),
+        server_count: publisher.server_count,
+        stars_total,
+        reports_total,
+        downloads_total,
+        average_quality_score,
+        servers,
+    }))
+}
+
 /// Builds badges for API responses.
 fn publisher_badges(maintainer_verified: bool) -> Vec<String> {
     if maintainer_verified {
@@ -5920,6 +6215,13 @@ mod tests {
         assert_eq!(publishers_verified_status, 200);
         assert!(publishers_verified_body.contains("Verified maintainers"));
         assert!(publishers_verified_body.contains("Anthropic"));
+        let (publisher_detail_status, publisher_detail_body) =
+            route_website_request(&req("GET", "/site/publishers/anthropic"), &registry, &state)
+                .unwrap();
+        assert_eq!(publisher_detail_status, 200);
+        assert!(publisher_detail_body.contains("Publisher Detail"));
+        assert!(publisher_detail_body.contains("Open servers in catalog"));
+        assert!(publisher_detail_body.contains("Mark unverified"));
 
         let review_update_req = HttpRequest {
             method: "POST".to_string(),
@@ -5957,6 +6259,11 @@ mod tests {
             route_website_request(&req("GET", "/site/servers/nope"), &registry, &state).unwrap();
         assert_eq!(not_found_status, 404);
         assert!(not_found_body.contains("Page Not Found"));
+
+        let (publisher_not_found_status, publisher_not_found_body) =
+            route_website_request(&req("GET", "/site/publishers/nope"), &registry, &state).unwrap();
+        assert_eq!(publisher_not_found_status, 404);
+        assert!(publisher_not_found_body.contains("Page Not Found"));
 
         let (method_status, method_body) =
             route_website_request(&req("POST", "/site"), &registry, &state).unwrap();
@@ -6719,6 +7026,42 @@ mod tests {
         assert_eq!(
             invalid_publishers_body["error"].as_str(),
             Some("invalid verified filter")
+        );
+
+        let (publisher_detail_status, publisher_detail_body) =
+            route_request(&req("GET", "/publishers/anthropic"), &registry, &state);
+        assert_eq!(publisher_detail_status, 200);
+        assert_eq!(
+            publisher_detail_body["maintainerNormalized"].as_str(),
+            Some("anthropic")
+        );
+        assert_eq!(publisher_detail_body["verified"].as_bool(), Some(true));
+        assert!(publisher_detail_body["serverCount"].as_u64().unwrap_or(0) >= 1);
+        assert!(publisher_detail_body["servers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|server| server["qualityScore"].as_u64().is_some()));
+
+        let (publisher_missing_status, publisher_missing_body) =
+            route_request(&req("GET", "/publishers/nope"), &registry, &state);
+        assert_eq!(publisher_missing_status, 404);
+        assert_eq!(
+            publisher_missing_body["error"].as_str(),
+            Some("publisher not found")
+        );
+
+        let invalid_method_request = HttpRequest {
+            method: "POST".to_string(),
+            target: "/publishers/anthropic".to_string(),
+            body: "{}".to_string(),
+        };
+        let (publisher_method_status, publisher_method_body) =
+            route_request(&invalid_method_request, &registry, &state);
+        assert_eq!(publisher_method_status, 405);
+        assert_eq!(
+            publisher_method_body["error"].as_str(),
+            Some("method not allowed")
         );
 
         let (search_status, search_body) =

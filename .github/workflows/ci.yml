@@ -76,6 +76,16 @@ jobs:
       - run: cargo build --workspace
       - run: bash scripts/quality-checks.sh
 
+  benchmark:
+    name: Benchmark Smoke
+    runs-on: ubuntu-latest
+    needs: [check, audit, deny]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: bash scripts/benchmark-smoke.sh 25
+
   docs:
     name: Docs Build
     runs-on: ubuntu-latest

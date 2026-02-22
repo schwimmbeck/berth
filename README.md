@@ -255,6 +255,9 @@ cargo fmt --all
 # Build documentation site
 make docs
 
+# Benchmark regression smoke check (startup median guard)
+make bench-smoke
+
 # Run CI quality smoke checks locally
 bash scripts/quality-checks.sh
 ```

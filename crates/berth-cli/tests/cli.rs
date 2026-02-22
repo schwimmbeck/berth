@@ -3040,6 +3040,57 @@ deny = ["github"]
 }
 
 #[test]
+fn policy_check_json_reports_denied_server() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+    write_global_policy(
+        tmp.path(),
+        r#"
+[servers]
+deny = ["github"]
+"#,
+    );
+
+    let output = berth_with_home(tmp.path())
+        .args(["policy", "github", "--json"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(json["server"].as_str(), Some("github"));
+    assert_eq!(json["allowed"].as_bool(), Some(false));
+    assert!(json["reason"]
+        .as_str()
+        .is_some_and(|msg| msg.contains("Policy denied")));
+}
+
+#[test]
+fn policy_check_json_reports_allowed_server() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+
+    let output = berth_with_home(tmp.path())
+        .args(["policy", "github", "--json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(json["server"].as_str(), Some("github"));
+    assert_eq!(json["allowed"].as_bool(), Some(true));
+    assert!(json["reason"].is_null());
+}
+
+#[test]
 fn audit_shows_runtime_events_for_server() {
     let tmp = tempfile::tempdir().unwrap();
     berth_with_home(tmp.path())

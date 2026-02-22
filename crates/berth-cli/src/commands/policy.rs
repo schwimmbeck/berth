@@ -88,17 +88,47 @@ pub fn execute(server: Option<&str>, set: Option<&str>, init: bool, json: bool) 
             }
         };
 
-        match enforce_global_policy(server_name, &installed.permissions, &overrides, &policy) {
-            Ok(()) => {
-                println!(
-                    "{} Policy allows {}.",
-                    "✓".green().bold(),
-                    server_name.cyan()
-                );
+        let validation =
+            enforce_global_policy(server_name, &installed.permissions, &overrides, &policy);
+        if json {
+            let payload = match &validation {
+                Ok(()) => serde_json::json!({
+                    "server": server_name,
+                    "allowed": true
+                }),
+                Err(msg) => serde_json::json!({
+                    "server": server_name,
+                    "allowed": false,
+                    "reason": msg
+                }),
+            };
+            match serde_json::to_string_pretty(&payload) {
+                Ok(rendered) => println!("{rendered}"),
+                Err(e) => {
+                    eprintln!(
+                        "{} Failed to serialize policy validation JSON: {}",
+                        "✗".red().bold(),
+                        e
+                    );
+                    process::exit(1);
+                }
             }
-            Err(msg) => {
-                eprintln!("{} {}", "✗".red().bold(), msg);
+            if validation.is_err() {
                 process::exit(1);
+            }
+        } else {
+            match validation {
+                Ok(()) => {
+                    println!(
+                        "{} Policy allows {}.",
+                        "✓".green().bold(),
+                        server_name.cyan()
+                    );
+                }
+                Err(msg) => {
+                    eprintln!("{} {}", "✗".red().bold(), msg);
+                    process::exit(1);
+                }
             }
         }
         return;

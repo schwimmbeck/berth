@@ -60,6 +60,7 @@ Registry API endpoints:
 - `GET /servers/<name>/downloads`
 - `GET /servers/<name>/community`
 - `GET /servers/<name>/reports` with optional `limit`, `offset`
+- `GET /reports/filters`
 - `GET /reports` with optional `server`, `reason`, `offset`, and `limit`
 - `GET /publish/submissions` with optional `status`, `server`, `offset`, and `limit`
 - `GET /publish/submissions/filters`

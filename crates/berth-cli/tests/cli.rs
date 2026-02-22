@@ -615,7 +615,7 @@ fn registry_api_serves_health_search_and_downloads() {
             "--bind",
             "127.0.0.1:0",
             "--max-requests",
-            "35",
+            "36",
         ])
         .stdout(Stdio::piped())
         .spawn()
@@ -787,6 +787,16 @@ fn registry_api_serves_health_search_and_downloads() {
         Some("github")
     );
 
+    let (report_filters_status, report_filters_body) = http_get(&addr, "/reports/filters");
+    assert_eq!(report_filters_status, 200);
+    let report_filters: serde_json::Value = serde_json::from_str(&report_filters_body).unwrap();
+    assert!(report_filters["totalReports"].as_u64().unwrap_or(0) >= 1);
+    assert!(report_filters["reasons"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["value"].as_str() == Some("spam")));
+
     let (submissions_status, submissions_body) = http_get(
         &addr,
         "/publish/submissions?status=pending-manual-review&server=github&limit=1",
@@ -873,6 +883,7 @@ fn registry_api_serves_health_search_and_downloads() {
     assert_eq!(site_reports_status, 200);
     assert!(site_reports_headers.contains("Content-Type: text/html; charset=utf-8"));
     assert!(site_reports_body.contains("Moderation Reports Feed"));
+    assert!(site_reports_body.contains("Feed Signals"));
     assert!(site_reports_body.contains("reason spam"));
     assert!(site_reports_body.contains("/site/servers/github"));
 

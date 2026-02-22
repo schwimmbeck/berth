@@ -1136,6 +1136,15 @@ fn render_site_reports_page(query: Option<&str>, state: &ApiState) -> String {
     }
     let report_query = report_query_pairs.join("&");
     let (_status, payload) = route_reports(Some(&report_query), state);
+    let (_filters_status, filters_payload) = route_report_filters(state);
+    let reason_facets = filters_payload["reasons"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let server_facets = filters_payload["servers"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
 
     let total = payload["total"].as_u64().unwrap_or(0) as usize;
     let offset = payload["offset"].as_u64().unwrap_or(0) as usize;
@@ -1168,6 +1177,61 @@ fn render_site_reports_page(query: Option<&str>, state: &ApiState) -> String {
         "<p>Review recent community reports across all servers from your local registry state.</p>",
     );
     content.push_str("</header>");
+
+    content.push_str("<section class=\"panel\">");
+    content.push_str("<h2>Feed Signals</h2>");
+    let total_reports = filters_payload["totalReports"].as_u64().unwrap_or(0);
+    content.push_str(&format!(
+        "<p class=\"meta\"><span>total reports {}</span></p>",
+        total_reports
+    ));
+    if !reason_facets.is_empty() {
+        content.push_str("<h3>By Reason</h3><ul class=\"trending-list\">");
+        for facet in reason_facets {
+            let value = facet["value"].as_str().unwrap_or_default();
+            let count = facet["count"].as_u64().unwrap_or(0);
+            if value.is_empty() {
+                continue;
+            }
+            let href = build_site_reports_path(&SiteReportsUrlParams {
+                server: server_filter.as_deref(),
+                reason: Some(value),
+                limit,
+                offset: 0,
+            });
+            content.push_str(&format!(
+                "<li><a href=\"{}\">{}</a> <span class=\"meta\">({})</span></li>",
+                html_escape(&href),
+                html_escape(value),
+                count
+            ));
+        }
+        content.push_str("</ul>");
+    }
+    if !server_facets.is_empty() {
+        content.push_str("<h3>By Server</h3><ul class=\"trending-list\">");
+        for facet in server_facets {
+            let value = facet["value"].as_str().unwrap_or_default();
+            let count = facet["count"].as_u64().unwrap_or(0);
+            if value.is_empty() {
+                continue;
+            }
+            let href = build_site_reports_path(&SiteReportsUrlParams {
+                server: Some(value),
+                reason: reason_filter.as_deref(),
+                limit,
+                offset: 0,
+            });
+            content.push_str(&format!(
+                "<li><a href=\"{}\">{}</a> <span class=\"meta\">({})</span></li>",
+                html_escape(&href),
+                html_escape(value),
+                count
+            ));
+        }
+        content.push_str("</ul>");
+    }
+    content.push_str("</section>");
 
     content.push_str("<section class=\"panel\">");
     content.push_str("<form class=\"filters\" method=\"GET\" action=\"/site/reports\">");
@@ -2522,6 +2586,17 @@ fn route_request(request: &HttpRequest, registry: &Registry, state: &ApiState) -
             }
             route_servers_suggest(query, registry, state)
         }
+        "/reports/filters" => {
+            if method != "GET" {
+                return (
+                    405,
+                    json!({
+                        "error": "method not allowed"
+                    }),
+                );
+            }
+            route_report_filters(state)
+        }
         "/reports" => {
             if method != "GET" {
                 return (
@@ -3024,6 +3099,53 @@ fn route_reports(query: Option<&str>, state: &ApiState) -> (u16, Value) {
                         "reason": reason_filter
                     },
                     "reports": reports
+                }),
+            )
+        }
+        Err(e) => (
+            500,
+            json!({
+                "error": "internal error",
+                "detail": e
+            }),
+        ),
+    }
+}
+
+fn route_report_filters(state: &ApiState) -> (u16, Value) {
+    match state.list_all_reports() {
+        Ok(reports) => {
+            let mut reason_counts = std::collections::BTreeMap::<String, u64>::new();
+            let mut server_counts = std::collections::BTreeMap::<String, u64>::new();
+            for report in &reports {
+                *reason_counts.entry(report.reason.clone()).or_insert(0) += 1;
+                *server_counts.entry(report.server.clone()).or_insert(0) += 1;
+            }
+            let reasons = reason_counts
+                .into_iter()
+                .map(|(value, count)| {
+                    json!({
+                        "value": value,
+                        "count": count
+                    })
+                })
+                .collect::<Vec<_>>();
+            let servers = server_counts
+                .into_iter()
+                .map(|(value, count)| {
+                    json!({
+                        "value": value,
+                        "count": count
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            (
+                200,
+                json!({
+                    "totalReports": reports.len(),
+                    "reasons": reasons,
+                    "servers": servers
                 }),
             )
         }
@@ -4609,6 +4731,7 @@ mod tests {
         .unwrap();
         assert_eq!(reports_status, 200);
         assert!(reports_body.contains("Moderation Reports Feed"));
+        assert!(reports_body.contains("Feed Signals"));
         assert!(reports_body.contains("/site/servers/github"));
         assert!(reports_body.contains("reason spam"));
 
@@ -4965,6 +5088,24 @@ mod tests {
         assert_eq!(abuse_status, 200);
         assert_eq!(abuse_body["total"].as_u64(), Some(1));
         assert_eq!(abuse_body["reports"][0]["reason"].as_str(), Some("abuse"));
+
+        let (filters_status, filters_body) =
+            route_request(&req("GET", "/reports/filters"), &registry, &state);
+        assert_eq!(filters_status, 200);
+        assert_eq!(filters_body["totalReports"].as_u64(), Some(2));
+        assert!(filters_body["reasons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(
+                |item| item["value"].as_str() == Some("spam") && item["count"].as_u64() == Some(1)
+            ));
+        assert!(filters_body["servers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["value"].as_str() == Some("github")
+                && item["count"].as_u64() == Some(1)));
     }
 
     #[test]

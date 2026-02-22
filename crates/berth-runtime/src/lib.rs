@@ -83,6 +83,18 @@ struct RuntimeState {
     restart_attempts: u32,
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct RuntimePolicyFile {
+    #[serde(default)]
+    servers: RuntimePolicyServers,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RuntimePolicyServers {
+    #[serde(default)]
+    deny: Vec<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AuditEvent {
@@ -169,17 +181,38 @@ impl RuntimeManager {
                 server: server.to_string(),
                 action: "exit".to_string(),
                 pid: old_pid,
-                command: old_command,
+                command: old_command.clone(),
                 args: if old_args.is_empty() {
                     None
                 } else {
-                    Some(old_args)
+                    Some(old_args.clone())
                 },
             })?;
 
             // Attempt bounded auto-restart when policy is enabled.
             if state.auto_restart_enabled && state.restart_attempts < state.max_restarts {
                 if let Some(spec) = spec {
+                    if self.server_denied_by_policy(server)? {
+                        state.status = ServerStatus::Stopped;
+                        state.pid = None;
+                        state.updated_at_epoch_secs = now_epoch_secs();
+                        self.write_state(server, &state)?;
+                        self.append_log(server, "POLICY_DENIED_AUTO_RESTART")?;
+                        self.append_audit_event(AuditEvent {
+                            timestamp_epoch_secs: now_epoch_secs(),
+                            server: server.to_string(),
+                            action: "policy-denied".to_string(),
+                            pid: old_pid,
+                            command: old_command,
+                            args: if old_args.is_empty() {
+                                None
+                            } else {
+                                Some(old_args)
+                            },
+                        })?;
+                        return Ok(ServerStatus::Stopped);
+                    }
+
                     let child = Command::new(&spec.command)
                         .args(&spec.args)
                         .envs(&spec.env)
@@ -477,6 +510,28 @@ impl RuntimeManager {
                 return Ok(());
             }
 
+            if self.server_denied_by_policy(server)? {
+                let mut stopped_state = self.read_state(server)?;
+                stopped_state.status = ServerStatus::Stopped;
+                stopped_state.pid = None;
+                stopped_state.updated_at_epoch_secs = now_epoch_secs();
+                self.write_state(server, &stopped_state)?;
+                self.append_log(server, "POLICY_DENIED_AUTO_RESTART")?;
+                self.append_audit_event(AuditEvent {
+                    timestamp_epoch_secs: now_epoch_secs(),
+                    server: server.to_string(),
+                    action: "policy-denied".to_string(),
+                    pid: Some(monitored_pid),
+                    command: stopped_state.command.clone(),
+                    args: if stopped_state.args.is_empty() {
+                        None
+                    } else {
+                        Some(stopped_state.args.clone())
+                    },
+                })?;
+                return Ok(());
+            }
+
             let control_state = self.read_state(server)?;
             if control_state.status != ServerStatus::Running
                 || control_state.pid != Some(monitored_pid)
@@ -608,6 +663,32 @@ impl RuntimeManager {
     /// JSONL audit log file path.
     fn audit_log_path(&self) -> PathBuf {
         self.audit_dir().join("audit.jsonl")
+    }
+
+    /// Org policy file path.
+    fn policy_path(&self) -> PathBuf {
+        self.berth_home.join("policy.toml")
+    }
+
+    /// Returns true when org policy denies this server by name or wildcard.
+    fn server_denied_by_policy(&self, server: &str) -> io::Result<bool> {
+        let policy_path = self.policy_path();
+        if !policy_path.exists() {
+            return Ok(false);
+        }
+
+        let content = fs::read_to_string(&policy_path)?;
+        let policy: RuntimePolicyFile = toml::from_str(&content).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("failed to parse policy file {}: {e}", policy_path.display()),
+            )
+        })?;
+
+        Ok(policy.servers.deny.iter().any(|entry| {
+            let normalized = entry.trim();
+            normalized == "*" || normalized.eq_ignore_ascii_case(server)
+        }))
     }
 
     /// Reads persisted state, defaulting to stopped when missing.
@@ -813,6 +894,15 @@ mod tests {
                 _ => return,
             }
         }
+    }
+
+    fn write_policy_deny_server(tmp: &tempfile::TempDir, server: &str) {
+        fs::create_dir_all(tmp.path().join(".berth")).unwrap();
+        fs::write(
+            tmp.path().join(".berth").join("policy.toml"),
+            format!("[servers]\ndeny = [\"{server}\"]\n"),
+        )
+        .unwrap();
     }
 
     #[cfg(unix)]
@@ -1078,6 +1168,23 @@ mod tests {
     }
 
     #[test]
+    fn status_with_spec_does_not_restart_when_server_denied_by_policy() {
+        let (tmp, manager) = manager();
+        let crash = crash_spec_with_policy(1);
+        let recover = long_running_spec();
+        manager.start("github", &crash).unwrap();
+        wait_until_process_exits(&manager, "github");
+        write_policy_deny_server(&tmp, "github");
+
+        let status = manager.status_with_spec("github", Some(&recover)).unwrap();
+        assert_eq!(status, ServerStatus::Stopped);
+
+        let audit = fs::read_to_string(manager.audit_log_path()).unwrap();
+        assert!(audit.contains("\"action\":\"policy-denied\""));
+        assert!(!audit.contains("\"action\":\"auto-restart\""));
+    }
+
+    #[test]
     fn auto_restart_respects_max_restarts_bound() {
         let (_tmp, manager) = manager();
         let crash = crash_spec_with_policy(1);
@@ -1128,5 +1235,27 @@ mod tests {
 
         let _ = manager.stop("github");
         handle.join().unwrap().unwrap();
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn tokio_supervisor_does_not_restart_when_server_denied_by_policy() {
+        let (tmp, manager) = manager();
+        let mut start_spec = crash_spec_with_policy(1);
+        start_spec.auto_restart = None;
+        manager.start("github", &start_spec).unwrap();
+        wait_until_process_exits(&manager, "github");
+        write_policy_deny_server(&tmp, "github");
+
+        let supervisor_spec = crash_spec_with_policy(1);
+        manager.run_supervisor("github", &supervisor_spec).unwrap();
+
+        let state = manager.read_state("github").unwrap();
+        assert_eq!(state.status, ServerStatus::Stopped);
+        assert_eq!(state.pid, None);
+
+        let audit = fs::read_to_string(manager.audit_log_path()).unwrap();
+        assert!(audit.contains("\"action\":\"policy-denied\""));
+        assert!(!audit.contains("\"action\":\"auto-restart\""));
     }
 }

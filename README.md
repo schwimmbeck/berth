@@ -207,6 +207,7 @@ Security behavior examples:
 - Org policy denial:
   - configure `~/.berth/policy.toml` with `[servers] deny = ["github"]`
   - `berth start github` (blocked and records `policy-denied`)
+  - crash recovery paths (`status`/supervisor auto-restart) also stay blocked
 - Org policy-aware client linking:
   - configure `~/.berth/policy.toml` with `[servers] deny = ["github"]`
   - `berth link claude-desktop` (skips blocked servers and warns)

@@ -43,6 +43,18 @@ struct ReportEvent {
     details: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PublishReviewEvent {
+    timestamp_epoch_secs: u64,
+    submission_id: String,
+    server: String,
+    previous_status: String,
+    status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    note: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 struct ReportPayload {
     #[serde(default)]
@@ -216,6 +228,17 @@ impl ApiState {
         self.reports_dir().join(format!("{server}.jsonl"))
     }
 
+    fn publish_root_dir(&self) -> PathBuf {
+        self.publish_queue_dir
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|| self.publish_queue_dir.clone())
+    }
+
+    fn publish_review_events_path(&self) -> PathBuf {
+        self.publish_root_dir().join("review-events.jsonl")
+    }
+
     fn publish_queue_dir(&self) -> PathBuf {
         self.publish_queue_dir.clone()
     }
@@ -376,6 +399,72 @@ impl ApiState {
         Ok(reports)
     }
 
+    fn append_publish_review_event(&self, event: &PublishReviewEvent) -> Result<(), String> {
+        let publish_dir = self.publish_root_dir();
+        fs::create_dir_all(&publish_dir).map_err(|e| {
+            format!(
+                "failed to create publish directory {}: {e}",
+                publish_dir.display()
+            )
+        })?;
+
+        let path = self.publish_review_events_path();
+        let line = serde_json::to_string(event)
+            .map_err(|e| format!("failed to serialize publish review event: {e}"))?;
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .map_err(|e| {
+                format!(
+                    "failed to open publish review events file {}: {e}",
+                    path.display()
+                )
+            })?;
+        writeln!(file, "{line}").map_err(|e| {
+            format!(
+                "failed to append publish review event {}: {e}",
+                path.display()
+            )
+        })
+    }
+
+    fn list_publish_review_events(&self) -> Result<Vec<PublishReviewEvent>, String> {
+        let path = self.publish_review_events_path();
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+        let content = fs::read_to_string(&path).map_err(|e| {
+            format!(
+                "failed to read publish review events file {}: {e}",
+                path.display()
+            )
+        })?;
+        let mut events = Vec::new();
+        for (idx, line) in content.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let event = serde_json::from_str::<PublishReviewEvent>(trimmed).map_err(|e| {
+                format!(
+                    "failed to parse publish review events file {} at line {}: {e}",
+                    path.display(),
+                    idx + 1
+                )
+            })?;
+            events.push(event);
+        }
+        events.sort_by(|left, right| {
+            right
+                .timestamp_epoch_secs
+                .cmp(&left.timestamp_epoch_secs)
+                .then_with(|| left.submission_id.cmp(&right.submission_id))
+                .then_with(|| left.status.cmp(&right.status))
+        });
+        Ok(events)
+    }
+
     fn list_publish_submissions(&self) -> Result<Vec<PublishSubmissionSummary>, String> {
         let queue_dir = self.publish_queue_dir();
         if !queue_dir.exists() {
@@ -444,6 +533,17 @@ impl ApiState {
         let mut value = serde_json::from_str::<Value>(&content)
             .map_err(|e| format!("failed to parse queue file {}: {e}", path.display()))?;
         let timestamp = now_epoch_secs();
+        let previous_status = value
+            .get("status")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|current| !current.is_empty())
+            .unwrap_or("unknown")
+            .to_string();
+        let normalized_note = note
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
         value["status"] = Value::String(status.to_string());
         value["reviewedAtEpochSecs"] = json!(timestamp);
 
@@ -459,7 +559,7 @@ impl ApiState {
                 "timestampEpochSecs": timestamp,
                 "status": status
             });
-            if let Some(note) = note.map(str::trim).filter(|value| !value.is_empty()) {
+            if let Some(note) = normalized_note.as_deref() {
                 event["note"] = Value::String(note.to_string());
             }
             history.push(event);
@@ -472,6 +572,14 @@ impl ApiState {
 
         let normalized = serde_json::from_value::<QueueSubmissionFile>(value)
             .map_err(|e| format!("failed to normalize queue file {}: {e}", path.display()))?;
+        self.append_publish_review_event(&PublishReviewEvent {
+            timestamp_epoch_secs: timestamp,
+            submission_id: submission_id.to_string(),
+            server: normalized.manifest.server.name.clone(),
+            previous_status,
+            status: status.to_string(),
+            note: normalized_note,
+        })?;
         Ok(Some(publish_submission_summary_from_queue_file(
             submission_id.to_string(),
             normalized,
@@ -2508,6 +2616,17 @@ fn route_request(request: &HttpRequest, registry: &Registry, state: &ApiState) -
         }
         return route_publish_submission_filters(state);
     }
+    if path == "/publish/review-events/filters" {
+        if method != "GET" {
+            return (
+                405,
+                json!({
+                    "error": "method not allowed"
+                }),
+            );
+        }
+        return route_publish_review_event_filters(state);
+    }
     if let Some(raw_submission_id) = path
         .strip_prefix("/publish/submissions/")
         .and_then(|rest| rest.strip_suffix("/status"))
@@ -2641,6 +2760,17 @@ fn route_request(request: &HttpRequest, registry: &Registry, state: &ApiState) -
                 );
             }
             route_publish_submissions(query, state)
+        }
+        "/publish/review-events" => {
+            if method != "GET" {
+                return (
+                    405,
+                    json!({
+                        "error": "method not allowed"
+                    }),
+                );
+            }
+            route_publish_review_events(query, state)
         }
         "/publishers/verified" => {
             if method != "GET" {
@@ -3249,6 +3379,129 @@ fn route_publish_submission_filters(state: &ApiState) -> (u16, Value) {
                     "totalSubmissions": submissions.len(),
                     "statuses": statuses,
                     "servers": servers
+                }),
+            )
+        }
+        Err(e) => (
+            500,
+            json!({
+                "error": "internal error",
+                "detail": e
+            }),
+        ),
+    }
+}
+
+fn route_publish_review_events(query: Option<&str>, state: &ApiState) -> (u16, Value) {
+    let limit = parse_usize_param(query, "limit").unwrap_or(50).min(200);
+    let offset = parse_usize_param(query, "offset").unwrap_or(0);
+    let status_filter = query_param(query, "status")
+        .map(url_decode)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let server_filter = query_param(query, "server")
+        .map(url_decode)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let submission_filter = query_param(query, "submission")
+        .or_else(|| query_param(query, "submissionId"))
+        .map(url_decode)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    match state.list_publish_review_events() {
+        Ok(mut events) => {
+            if let Some(status) = &status_filter {
+                events.retain(|item| item.status.eq_ignore_ascii_case(status));
+            }
+            if let Some(server) = &server_filter {
+                events.retain(|item| item.server.eq_ignore_ascii_case(server));
+            }
+            if let Some(submission) = &submission_filter {
+                events.retain(|item| item.submission_id.eq_ignore_ascii_case(submission));
+            }
+            let total = events.len();
+            let events = events
+                .into_iter()
+                .skip(offset)
+                .take(limit)
+                .collect::<Vec<_>>();
+            let count = events.len();
+            (
+                200,
+                json!({
+                    "total": total,
+                    "count": count,
+                    "offset": offset,
+                    "limit": limit,
+                    "filters": {
+                        "status": status_filter,
+                        "server": server_filter,
+                        "submission": submission_filter
+                    },
+                    "events": events
+                }),
+            )
+        }
+        Err(e) => (
+            500,
+            json!({
+                "error": "internal error",
+                "detail": e
+            }),
+        ),
+    }
+}
+
+fn route_publish_review_event_filters(state: &ApiState) -> (u16, Value) {
+    match state.list_publish_review_events() {
+        Ok(events) => {
+            let mut status_counts = std::collections::BTreeMap::<String, u64>::new();
+            let mut server_counts = std::collections::BTreeMap::<String, u64>::new();
+            let mut submission_counts = std::collections::BTreeMap::<String, u64>::new();
+            for event in &events {
+                *status_counts.entry(event.status.clone()).or_insert(0) += 1;
+                *server_counts.entry(event.server.clone()).or_insert(0) += 1;
+                *submission_counts
+                    .entry(event.submission_id.clone())
+                    .or_insert(0) += 1;
+            }
+
+            let statuses = status_counts
+                .into_iter()
+                .map(|(value, count)| {
+                    json!({
+                        "value": value,
+                        "count": count
+                    })
+                })
+                .collect::<Vec<_>>();
+            let servers = server_counts
+                .into_iter()
+                .map(|(value, count)| {
+                    json!({
+                        "value": value,
+                        "count": count
+                    })
+                })
+                .collect::<Vec<_>>();
+            let submissions = submission_counts
+                .into_iter()
+                .map(|(value, count)| {
+                    json!({
+                        "value": value,
+                        "count": count
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            (
+                200,
+                json!({
+                    "totalEvents": events.len(),
+                    "statuses": statuses,
+                    "servers": servers,
+                    "submissions": submissions
                 }),
             )
         }
@@ -5265,6 +5518,51 @@ mod tests {
             detail_body["submission"]["reviewHistory"][0]["note"].as_str(),
             Some("looks good")
         );
+
+        let (events_status, events_body) = route_request(
+            &req(
+                "GET",
+                "/publish/review-events?status=approved&server=github",
+            ),
+            &registry,
+            &state,
+        );
+        assert_eq!(events_status, 200);
+        assert_eq!(events_body["total"].as_u64(), Some(1));
+        assert_eq!(
+            events_body["events"][0]["submissionId"].as_str(),
+            Some("github-500.json")
+        );
+        assert_eq!(
+            events_body["events"][0]["previousStatus"].as_str(),
+            Some("pending-manual-review")
+        );
+        assert_eq!(
+            events_body["events"][0]["status"].as_str(),
+            Some("approved")
+        );
+        assert_eq!(
+            events_body["events"][0]["note"].as_str(),
+            Some("looks good")
+        );
+
+        let (event_filters_status, event_filters_body) = route_request(
+            &req("GET", "/publish/review-events/filters"),
+            &registry,
+            &state,
+        );
+        assert_eq!(event_filters_status, 200);
+        assert_eq!(event_filters_body["totalEvents"].as_u64(), Some(1));
+        assert!(event_filters_body["statuses"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["value"].as_str() == Some("approved")));
+        assert!(event_filters_body["servers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["value"].as_str() == Some("github")));
 
         let invalid_request = HttpRequest {
             method: "POST".to_string(),

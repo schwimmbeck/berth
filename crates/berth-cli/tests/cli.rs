@@ -615,7 +615,7 @@ fn registry_api_serves_health_search_and_downloads() {
             "--bind",
             "127.0.0.1:0",
             "--max-requests",
-            "36",
+            "38",
         ])
         .stdout(Stdio::piped())
         .spawn()
@@ -877,6 +877,43 @@ fn registry_api_serves_health_search_and_downloads() {
         approved_submissions["submissions"][0]["status"].as_str(),
         Some("approved")
     );
+
+    let (review_events_status, review_events_body) = http_get(
+        &addr,
+        "/publish/review-events?status=approved&server=github",
+    );
+    assert_eq!(review_events_status, 200);
+    let review_events: serde_json::Value = serde_json::from_str(&review_events_body).unwrap();
+    assert_eq!(review_events["total"].as_u64(), Some(1));
+    assert_eq!(
+        review_events["events"][0]["submissionId"].as_str(),
+        Some("github-200.json")
+    );
+    assert_eq!(
+        review_events["events"][0]["previousStatus"].as_str(),
+        Some("pending-manual-review")
+    );
+    assert_eq!(
+        review_events["events"][0]["note"].as_str(),
+        Some("quality checks passed")
+    );
+
+    let (review_event_filters_status, review_event_filters_body) =
+        http_get(&addr, "/publish/review-events/filters");
+    assert_eq!(review_event_filters_status, 200);
+    let review_event_filters: serde_json::Value =
+        serde_json::from_str(&review_event_filters_body).unwrap();
+    assert_eq!(review_event_filters["totalEvents"].as_u64(), Some(1));
+    assert!(review_event_filters["statuses"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["value"].as_str() == Some("approved")));
+    assert!(review_event_filters["servers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["value"].as_str() == Some("github")));
 
     let (site_reports_status, site_reports_headers, site_reports_body) =
         http_get_with_headers(&addr, "/site/reports?server=github");

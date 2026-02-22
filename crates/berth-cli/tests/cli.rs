@@ -615,7 +615,7 @@ fn registry_api_serves_health_search_and_downloads() {
             "--bind",
             "127.0.0.1:0",
             "--max-requests",
-            "39",
+            "40",
         ])
         .stdout(Stdio::piped())
         .spawn()
@@ -653,6 +653,7 @@ fn registry_api_serves_health_search_and_downloads() {
     assert!(site_body.contains("Trending Right Now"));
     assert!(site_body.contains("/site/submissions"));
     assert!(site_body.contains("/site/review-events"));
+    assert!(site_body.contains("/site/publishers"));
 
     let (site_page_status, _site_page_headers, site_page_body) =
         http_get_with_headers(&addr, "/site?limit=1&offset=1");
@@ -671,6 +672,13 @@ fn registry_api_serves_health_search_and_downloads() {
     assert!(site_detail_body.contains("Star this server"));
     assert!(site_detail_body.contains("Recent Reports"));
     assert!(site_detail_body.contains("data-report-list"));
+
+    let (site_publishers_status, site_publishers_headers, site_publishers_body) =
+        http_get_with_headers(&addr, "/site/publishers?verified=unverified");
+    assert_eq!(site_publishers_status, 200);
+    assert!(site_publishers_headers.contains("Content-Type: text/html; charset=utf-8"));
+    assert!(site_publishers_body.contains("Publisher Verification"));
+    assert!(site_publishers_body.contains("publisher-action-btn"));
 
     let (search_status, search_body) = http_get(&addr, "/servers?q=github");
     assert_eq!(search_status, 200);

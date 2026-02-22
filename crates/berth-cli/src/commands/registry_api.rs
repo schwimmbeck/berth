@@ -153,6 +153,14 @@ struct SiteSubmissionsUrlParams<'a> {
 }
 
 #[derive(Debug, Clone, Copy)]
+struct SitePublishersUrlParams<'a> {
+    maintainer: Option<&'a str>,
+    verified: Option<&'a str>,
+    limit: usize,
+    offset: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
 struct SiteReviewEventsUrlParams<'a> {
     status: Option<&'a str>,
     server: Option<&'a str>,
@@ -822,7 +830,7 @@ fn now_epoch_secs() -> u64 {
         .as_secs()
 }
 
-/// Routes browser-facing local website paths (`/site`, `/site/reports`, `/site/submissions`, `/site/review-events`, `/site/submissions/<id>`, `/site/servers/<name>`).
+/// Routes browser-facing local website paths (`/site`, `/site/reports`, `/site/submissions`, `/site/review-events`, `/site/publishers`, `/site/submissions/<id>`, `/site/servers/<name>`).
 fn route_website_request(
     request: &HttpRequest,
     registry: &Registry,
@@ -842,6 +850,9 @@ fn route_website_request(
         "/site/reports" | "/site/reports/" => Some((200, render_site_reports_page(query, state))),
         "/site/submissions" | "/site/submissions/" => {
             Some((200, render_site_submissions_page(query, state)))
+        }
+        "/site/publishers" | "/site/publishers/" => {
+            Some((200, render_site_publishers_page(query, registry, state)))
         }
         "/site/review-events" | "/site/review-events/" => {
             Some((200, render_site_review_events_page(query, state)))
@@ -1171,6 +1182,7 @@ fn render_site_catalog_page(query: Option<&str>, registry: &Registry, state: &Ap
     content.push_str("<p><a href=\"/site/reports\">Open moderation reports feed</a></p>");
     content.push_str("<p><a href=\"/site/submissions\">Open publish review queue</a></p>");
     content.push_str("<p><a href=\"/site/review-events\">Open publish review event feed</a></p>");
+    content.push_str("<p><a href=\"/site/publishers\">Open publisher verification</a></p>");
     content.push_str("</section>");
 
     content.push_str("<section class=\"panel\">");
@@ -1426,6 +1438,284 @@ fn render_site_reports_page(query: Option<&str>, state: &ApiState) -> String {
     content.push_str("</section>");
 
     render_site_shell("Berth Registry Reports", &content)
+}
+
+/// Renders a publisher verification page at `/site/publishers`.
+fn render_site_publishers_page(
+    query: Option<&str>,
+    registry: &Registry,
+    state: &ApiState,
+) -> String {
+    let maintainer_filter = query_param(query, "maintainer")
+        .map(url_decode)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let verified_filter_raw = query_param(query, "verified")
+        .map(url_decode)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let verified_filter = verified_filter_raw.as_deref().and_then(|value| {
+        if value.eq_ignore_ascii_case("verified") || value.eq_ignore_ascii_case("true") {
+            Some(true)
+        } else if value.eq_ignore_ascii_case("unverified") || value.eq_ignore_ascii_case("false") {
+            Some(false)
+        } else {
+            None
+        }
+    });
+    let normalized_verified_filter = match verified_filter {
+        Some(true) => Some("verified"),
+        Some(false) => Some("unverified"),
+        None => None,
+    };
+    let limit = parse_usize_param(query, "limit")
+        .unwrap_or(25)
+        .clamp(1, 200);
+    let requested_offset = parse_usize_param(query, "offset").unwrap_or(0);
+
+    let verified_publishers = state.list_verified_publishers().unwrap_or_default();
+    let mut maintainer_counts = std::collections::BTreeMap::<String, u64>::new();
+    for server in registry.list_all() {
+        *maintainer_counts
+            .entry(server.maintainer.clone())
+            .or_insert(0) += 1;
+    }
+    for maintainer in &verified_publishers {
+        let already_tracked = maintainer_counts
+            .keys()
+            .any(|name| normalize_maintainer(name) == *maintainer);
+        if !already_tracked {
+            maintainer_counts.insert(maintainer.clone(), 0);
+        }
+    }
+
+    let mut publishers = maintainer_counts
+        .into_iter()
+        .map(|(maintainer, servers)| {
+            let verified = is_maintainer_verified(&maintainer, &verified_publishers);
+            (maintainer, servers, verified)
+        })
+        .collect::<Vec<_>>();
+    publishers.sort_by(|left, right| {
+        right
+            .2
+            .cmp(&left.2)
+            .then_with(|| right.1.cmp(&left.1))
+            .then_with(|| left.0.to_lowercase().cmp(&right.0.to_lowercase()))
+    });
+
+    let total_maintainers = publishers.len();
+    let total_verified = publishers.iter().filter(|item| item.2).count();
+    let total_unverified = total_maintainers.saturating_sub(total_verified);
+
+    if let Some(maintainer) = &maintainer_filter {
+        let lookup = maintainer.to_lowercase();
+        publishers.retain(|item| item.0.to_lowercase().contains(&lookup));
+    }
+    if let Some(verified) = verified_filter {
+        publishers.retain(|item| item.2 == verified);
+    }
+
+    let total = publishers.len();
+    let offset = if total == 0 {
+        0
+    } else {
+        requested_offset.min(((total - 1) / limit) * limit)
+    };
+    let shown_publishers = publishers
+        .into_iter()
+        .skip(offset)
+        .take(limit)
+        .collect::<Vec<_>>();
+    let showing_count = shown_publishers.len();
+    let showing_start = if showing_count == 0 { 0 } else { offset + 1 };
+    let showing_end = offset + showing_count;
+    let has_prev = offset > 0;
+    let has_next = showing_end < total;
+
+    let all_href = build_site_publishers_path(&SitePublishersUrlParams {
+        maintainer: maintainer_filter.as_deref(),
+        verified: None,
+        limit,
+        offset: 0,
+    });
+    let verified_href = build_site_publishers_path(&SitePublishersUrlParams {
+        maintainer: maintainer_filter.as_deref(),
+        verified: Some("verified"),
+        limit,
+        offset: 0,
+    });
+    let unverified_href = build_site_publishers_path(&SitePublishersUrlParams {
+        maintainer: maintainer_filter.as_deref(),
+        verified: Some("unverified"),
+        limit,
+        offset: 0,
+    });
+    let prev_href = build_site_publishers_path(&SitePublishersUrlParams {
+        maintainer: maintainer_filter.as_deref(),
+        verified: normalized_verified_filter,
+        limit,
+        offset: offset.saturating_sub(limit),
+    });
+    let next_href = build_site_publishers_path(&SitePublishersUrlParams {
+        maintainer: maintainer_filter.as_deref(),
+        verified: normalized_verified_filter,
+        limit,
+        offset: offset.saturating_add(limit),
+    });
+
+    let mut content = String::new();
+    content.push_str("<header class=\"hero\">");
+    content.push_str("<p class=\"kicker\"><a href=\"/site\">Back to catalog</a></p>");
+    content.push_str("<h1>Publisher Verification</h1>");
+    content
+        .push_str("<p>Manage verified publisher status using local registry community state.</p>");
+    content.push_str("</header>");
+
+    content.push_str("<section class=\"panel\">");
+    content.push_str("<h2>Publisher Signals</h2>");
+    content.push_str("<p class=\"meta\">");
+    content.push_str(&format!(
+        "<span>maintainers {}</span><span>verified {}</span><span>unverified {}</span>",
+        total_maintainers, total_verified, total_unverified
+    ));
+    content.push_str("</p>");
+    content.push_str("<ul class=\"trending-list\">");
+    content.push_str(&format!(
+        "<li><a href=\"{}\">All maintainers</a> <span class=\"meta\">({})</span></li>",
+        html_escape(&all_href),
+        total_maintainers
+    ));
+    content.push_str(&format!(
+        "<li><a href=\"{}\">Verified maintainers</a> <span class=\"meta\">({})</span></li>",
+        html_escape(&verified_href),
+        total_verified
+    ));
+    content.push_str(&format!(
+        "<li><a href=\"{}\">Unverified maintainers</a> <span class=\"meta\">({})</span></li>",
+        html_escape(&unverified_href),
+        total_unverified
+    ));
+    content.push_str("</ul>");
+    content.push_str("</section>");
+
+    let selected_verified = normalized_verified_filter.unwrap_or_default();
+    content.push_str("<section class=\"panel\">");
+    content.push_str("<form class=\"filters\" method=\"GET\" action=\"/site/publishers\">");
+    content.push_str(
+        "<label>Maintainer<input type=\"text\" name=\"maintainer\" placeholder=\"Anthropic\" value=\"",
+    );
+    content.push_str(&html_escape(
+        maintainer_filter.as_deref().unwrap_or_default(),
+    ));
+    content.push_str("\"></label>");
+    content.push_str("<label>Verification<select name=\"verified\">");
+    content.push_str("<option value=\"\">All</option>");
+    let verified_selected = if selected_verified.eq_ignore_ascii_case("verified") {
+        " selected"
+    } else {
+        ""
+    };
+    content.push_str(&format!(
+        "<option value=\"verified\"{}>Verified</option>",
+        verified_selected
+    ));
+    let unverified_selected = if selected_verified.eq_ignore_ascii_case("unverified") {
+        " selected"
+    } else {
+        ""
+    };
+    content.push_str(&format!(
+        "<option value=\"unverified\"{}>Unverified</option>",
+        unverified_selected
+    ));
+    content.push_str("</select></label>");
+    content.push_str("<input type=\"hidden\" name=\"offset\" value=\"0\">");
+    content.push_str(
+        "<label>Limit<input type=\"number\" min=\"1\" max=\"200\" name=\"limit\" value=\"",
+    );
+    content.push_str(&limit.to_string());
+    content.push_str("\"></label>");
+    content.push_str("<button type=\"submit\">Apply</button>");
+    content.push_str("</form>");
+    content.push_str(&format!(
+        "<p class=\"summary\">Showing <strong>{showing_start}-{showing_end}</strong> of <strong>{total}</strong> maintainers.</p>",
+    ));
+    content.push_str("<div class=\"pagination\">");
+    if has_prev {
+        content.push_str(&format!(
+            "<a href=\"{}\">Previous</a>",
+            html_escape(&prev_href)
+        ));
+    } else {
+        content.push_str("<span class=\"pagination-disabled\">Previous</span>");
+    }
+    if has_next {
+        content.push_str(&format!("<a href=\"{}\">Next</a>", html_escape(&next_href)));
+    } else {
+        content.push_str("<span class=\"pagination-disabled\">Next</span>");
+    }
+    content.push_str("</div>");
+    content.push_str("</section>");
+
+    content.push_str("<section class=\"panel\">");
+    content.push_str("<h2>Maintainers</h2>");
+    if shown_publishers.is_empty() {
+        content.push_str("<p class=\"empty\">No maintainers matched the current filters.</p>");
+    } else {
+        content.push_str("<ul class=\"related-list\">");
+        for (maintainer, server_count, verified) in shown_publishers {
+            let normalized = normalize_maintainer(&maintainer);
+            let maintainer_name = if maintainer.is_empty() {
+                normalized.clone()
+            } else {
+                maintainer.clone()
+            };
+            let maintainer_for_api = if normalized.is_empty() {
+                maintainer_name.clone()
+            } else {
+                normalized
+            };
+            let action = if verified { "unverify" } else { "verify" };
+            let action_label = if verified {
+                "Mark unverified"
+            } else {
+                "Mark verified"
+            };
+            let status_label = if verified { "verified" } else { "unverified" };
+            let search_href = build_site_catalog_path(&SiteCatalogUrlParams {
+                search_query: &maintainer_name,
+                category: None,
+                platform: None,
+                trust_level: None,
+                sort_by: SortBy::Name,
+                sort_order: SortOrder::Asc,
+                limit: 24,
+                offset: 0,
+            });
+            content.push_str("<li>");
+            content.push_str(&format!(
+                "<a href=\"{}\">{}</a> <span class=\"meta\">status {} · servers {}</span>",
+                html_escape(&search_href),
+                html_escape(&maintainer_name),
+                status_label,
+                server_count
+            ));
+            content.push_str("<div class=\"community-actions\">");
+            content.push_str(&format!(
+                "<button type=\"button\" class=\"publisher-action-btn\" data-action=\"{}\" data-maintainer=\"{}\">{}</button>",
+                action,
+                html_escape(&maintainer_for_api),
+                action_label
+            ));
+            content.push_str("</div>");
+            content.push_str("</li>");
+        }
+        content.push_str("</ul>");
+    }
+    content.push_str("</section>");
+
+    render_site_shell("Berth Publisher Verification", &content)
 }
 
 /// Renders a publish review-event feed at `/site/review-events`.
@@ -2687,6 +2977,29 @@ for (const button of document.querySelectorAll(".submission-status-btn")) {
     }
   });
 }
+
+for (const button of document.querySelectorAll(".publisher-action-btn")) {
+  button.addEventListener("click", async () => {
+    const maintainer = button.getAttribute("data-maintainer");
+    const action = button.getAttribute("data-action");
+    if (!maintainer || !action) return;
+    const endpoint = action === "verify" ? "/publishers/verify" : "/publishers/unverify";
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ maintainer })
+      });
+      if (!response.ok) throw new Error();
+      button.textContent = "Updated";
+      setTimeout(() => {
+        window.location.reload();
+      }, 250);
+    } catch (_) {
+      button.textContent = "Update failed";
+    }
+  });
+}
 "#,
     );
     page.push_str("</script></body></html>");
@@ -2776,6 +3089,26 @@ fn build_site_submissions_path(params: &SiteSubmissionsUrlParams<'_>) -> String 
         .collect::<Vec<_>>()
         .join("&");
     format!("/site/submissions?{query}")
+}
+
+/// Builds a stable `/site/publishers` URL with current publisher query parameters.
+fn build_site_publishers_path(params: &SitePublishersUrlParams<'_>) -> String {
+    let mut pairs = Vec::new();
+    if let Some(maintainer) = params.maintainer.filter(|value| !value.trim().is_empty()) {
+        pairs.push(("maintainer".to_string(), url_encode(maintainer.trim())));
+    }
+    if let Some(verified) = params.verified.filter(|value| !value.trim().is_empty()) {
+        pairs.push(("verified".to_string(), url_encode(verified.trim())));
+    }
+    pairs.push(("limit".to_string(), params.limit.to_string()));
+    pairs.push(("offset".to_string(), params.offset.to_string()));
+
+    let query = pairs
+        .into_iter()
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect::<Vec<_>>()
+        .join("&");
+    format!("/site/publishers?{query}")
 }
 
 /// Builds a stable `/site/review-events` URL with current review-event query parameters.
@@ -5277,6 +5610,7 @@ mod tests {
         assert!(catalog.contains("/site/reports"));
         assert!(catalog.contains("/site/submissions"));
         assert!(catalog.contains("/site/review-events"));
+        assert!(catalog.contains("/site/publishers"));
 
         let (detail_status, detail) =
             route_website_request(&req("GET", "/site/servers/github"), &registry, &state).unwrap();
@@ -5311,6 +5645,17 @@ mod tests {
         assert!(reports_body.contains("Feed Signals"));
         assert!(reports_body.contains("/site/servers/github"));
         assert!(reports_body.contains("reason spam"));
+
+        let (publishers_status, publishers_body) = route_website_request(
+            &req("GET", "/site/publishers?verified=unverified"),
+            &registry,
+            &state,
+        )
+        .unwrap();
+        assert_eq!(publishers_status, 200);
+        assert!(publishers_body.contains("Publisher Verification"));
+        assert!(publishers_body.contains("publisher-action-btn"));
+        assert!(publishers_body.contains("Unverified maintainers"));
 
         seed_publish_submission(
             &state,
@@ -5347,6 +5692,25 @@ mod tests {
         assert!(submission_detail_body.contains("Manifest Payload"));
         assert!(submission_detail_body.contains("submission-status-btn"));
         assert!(submission_detail_body.contains("/site/review-events"));
+
+        let verify_req = HttpRequest {
+            method: "POST".to_string(),
+            target: "/publishers/verify".to_string(),
+            body: "{\"maintainer\":\"Anthropic\"}".to_string(),
+        };
+        assert_eq!(route_request(&verify_req, &registry, &state).0, 200);
+        let (publishers_verified_status, publishers_verified_body) = route_website_request(
+            &req(
+                "GET",
+                "/site/publishers?verified=verified&maintainer=anthropic",
+            ),
+            &registry,
+            &state,
+        )
+        .unwrap();
+        assert_eq!(publishers_verified_status, 200);
+        assert!(publishers_verified_body.contains("Verified maintainers"));
+        assert!(publishers_verified_body.contains("Anthropic"));
 
         let review_update_req = HttpRequest {
             method: "POST".to_string(),
@@ -5450,6 +5814,21 @@ mod tests {
         assert!(path.contains("server=github"));
         assert!(path.contains("limit=12"));
         assert!(path.contains("offset=24"));
+    }
+
+    #[test]
+    fn build_site_publishers_path_preserves_query_state() {
+        let path = build_site_publishers_path(&SitePublishersUrlParams {
+            maintainer: Some("Acme Labs"),
+            verified: Some("unverified"),
+            limit: 10,
+            offset: 30,
+        });
+        assert!(path.starts_with("/site/publishers?"));
+        assert!(path.contains("maintainer=Acme%20Labs"));
+        assert!(path.contains("verified=unverified"));
+        assert!(path.contains("limit=10"));
+        assert!(path.contains("offset=30"));
     }
 
     #[test]

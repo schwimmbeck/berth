@@ -225,6 +225,15 @@ struct PublishSubmissionServerSummary {
     category: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PublisherSummary {
+    maintainer: String,
+    maintainer_normalized: String,
+    verified: bool,
+    server_count: u64,
+}
+
 impl ApiState {
     fn new(community_dir: PathBuf, publish_queue_dir: PathBuf) -> Self {
         Self {
@@ -3427,6 +3436,28 @@ fn route_request(request: &HttpRequest, registry: &Registry, state: &ApiState) -
             }
             route_publish_review_events(query, state)
         }
+        "/publishers" => {
+            if method != "GET" {
+                return (
+                    405,
+                    json!({
+                        "error": "method not allowed"
+                    }),
+                );
+            }
+            route_publishers(query, registry, state)
+        }
+        "/publishers/filters" => {
+            if method != "GET" {
+                return (
+                    405,
+                    json!({
+                        "error": "method not allowed"
+                    }),
+                );
+            }
+            route_publisher_filters(registry, state)
+        }
         "/publishers/verified" => {
             if method != "GET" {
                 return (
@@ -4157,6 +4188,126 @@ fn route_publish_review_event_filters(state: &ApiState) -> (u16, Value) {
                     "statuses": statuses,
                     "servers": servers,
                     "submissions": submissions
+                }),
+            )
+        }
+        Err(e) => (
+            500,
+            json!({
+                "error": "internal error",
+                "detail": e
+            }),
+        ),
+    }
+}
+
+fn route_publishers(query: Option<&str>, registry: &Registry, state: &ApiState) -> (u16, Value) {
+    let limit = parse_usize_param(query, "limit").unwrap_or(25).min(200);
+    let offset = parse_usize_param(query, "offset").unwrap_or(0);
+    let maintainer_filter = query_param(query, "maintainer")
+        .map(url_decode)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let verified_filter_raw = query_param(query, "verified")
+        .map(url_decode)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let verified_filter = verified_filter_raw
+        .as_deref()
+        .and_then(parse_publisher_verified_filter);
+    if verified_filter_raw.is_some() && verified_filter.is_none() {
+        return (
+            400,
+            json!({
+                "error": "invalid verified filter",
+                "detail": "supported values: verified, unverified, true, false"
+            }),
+        );
+    }
+
+    match list_publishers(registry, state) {
+        Ok(mut publishers) => {
+            if let Some(maintainer) = &maintainer_filter {
+                let lookup = maintainer.to_lowercase();
+                publishers.retain(|item| item.maintainer.to_lowercase().contains(&lookup));
+            }
+            if let Some(verified) = verified_filter {
+                publishers.retain(|item| item.verified == verified);
+            }
+
+            let total = publishers.len();
+            let publishers = publishers
+                .into_iter()
+                .skip(offset)
+                .take(limit)
+                .collect::<Vec<_>>();
+            let count = publishers.len();
+            let verified_filter = match verified_filter {
+                Some(true) => Some("verified"),
+                Some(false) => Some("unverified"),
+                None => None,
+            };
+            (
+                200,
+                json!({
+                    "total": total,
+                    "count": count,
+                    "offset": offset,
+                    "limit": limit,
+                    "filters": {
+                        "maintainer": maintainer_filter,
+                        "verified": verified_filter
+                    },
+                    "publishers": publishers
+                }),
+            )
+        }
+        Err(e) => (
+            500,
+            json!({
+                "error": "internal error",
+                "detail": e
+            }),
+        ),
+    }
+}
+
+fn route_publisher_filters(registry: &Registry, state: &ApiState) -> (u16, Value) {
+    match list_publishers(registry, state) {
+        Ok(publishers) => {
+            let total_maintainers = publishers.len() as u64;
+            let verified_maintainers =
+                publishers.iter().filter(|item| item.verified).count() as u64;
+            let unverified_maintainers = total_maintainers.saturating_sub(verified_maintainers);
+            let verification = vec![
+                json!({
+                    "value": "verified",
+                    "count": verified_maintainers
+                }),
+                json!({
+                    "value": "unverified",
+                    "count": unverified_maintainers
+                }),
+            ];
+            let maintainers = publishers
+                .into_iter()
+                .map(|item| {
+                    json!({
+                        "value": item.maintainer,
+                        "count": item.server_count,
+                        "verified": item.verified
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            (
+                200,
+                json!({
+                    "totalMaintainers": total_maintainers,
+                    "verifiedMaintainers": verified_maintainers,
+                    "unverifiedMaintainers": unverified_maintainers,
+                    "verification": verification,
+                    "maintainers": maintainers
                 }),
             )
         }
@@ -5248,10 +5399,68 @@ fn normalize_maintainer(maintainer: &str) -> String {
         .to_lowercase()
 }
 
+fn parse_publisher_verified_filter(value: &str) -> Option<bool> {
+    if value.eq_ignore_ascii_case("verified") || value.eq_ignore_ascii_case("true") {
+        Some(true)
+    } else if value.eq_ignore_ascii_case("unverified") || value.eq_ignore_ascii_case("false") {
+        Some(false)
+    } else {
+        None
+    }
+}
+
 /// Returns `true` when a maintainer is in the verified list.
 fn is_maintainer_verified(maintainer: &str, verified_publishers: &[String]) -> bool {
     let normalized = normalize_maintainer(maintainer);
     !normalized.is_empty() && verified_publishers.iter().any(|name| name == &normalized)
+}
+
+fn list_publishers(registry: &Registry, state: &ApiState) -> Result<Vec<PublisherSummary>, String> {
+    let verified_publishers = state.list_verified_publishers()?;
+    let mut maintainer_counts = std::collections::BTreeMap::<String, u64>::new();
+    for server in registry.list_all() {
+        *maintainer_counts
+            .entry(server.maintainer.clone())
+            .or_insert(0) += 1;
+    }
+    for maintainer in &verified_publishers {
+        let already_tracked = maintainer_counts
+            .keys()
+            .any(|name| normalize_maintainer(name) == *maintainer);
+        if !already_tracked {
+            maintainer_counts.insert(maintainer.clone(), 0);
+        }
+    }
+
+    let mut publishers = maintainer_counts
+        .into_iter()
+        .map(|(maintainer, server_count)| {
+            let maintainer_normalized = normalize_maintainer(&maintainer);
+            let verified = !maintainer_normalized.is_empty()
+                && verified_publishers
+                    .iter()
+                    .any(|name| name == &maintainer_normalized);
+            let maintainer = if maintainer.trim().is_empty() {
+                maintainer_normalized.clone()
+            } else {
+                maintainer
+            };
+            PublisherSummary {
+                maintainer,
+                maintainer_normalized,
+                verified,
+                server_count,
+            }
+        })
+        .collect::<Vec<_>>();
+    publishers.sort_by(|left, right| {
+        right
+            .verified
+            .cmp(&left.verified)
+            .then_with(|| right.server_count.cmp(&left.server_count))
+            .then_with(|| left.maintainer_normalized.cmp(&right.maintainer_normalized))
+    });
+    Ok(publishers)
 }
 
 /// Builds badges for API responses.
@@ -6465,6 +6674,52 @@ mod tests {
             .unwrap()
             .iter()
             .any(|v| v.as_str() == Some("anthropic")));
+
+        let (publishers_status, publishers_body) = route_request(
+            &req("GET", "/publishers?verified=verified&maintainer=anth"),
+            &registry,
+            &state,
+        );
+        assert_eq!(publishers_status, 200);
+        assert_eq!(publishers_body["count"].as_u64(), Some(1));
+        assert_eq!(
+            publishers_body["publishers"][0]["maintainerNormalized"].as_str(),
+            Some("anthropic")
+        );
+        assert_eq!(
+            publishers_body["publishers"][0]["verified"].as_bool(),
+            Some(true)
+        );
+        assert!(
+            publishers_body["publishers"][0]["serverCount"]
+                .as_u64()
+                .unwrap_or(0)
+                >= 1
+        );
+
+        let (publisher_filters_status, publisher_filters_body) =
+            route_request(&req("GET", "/publishers/filters"), &registry, &state);
+        assert_eq!(publisher_filters_status, 200);
+        assert!(
+            publisher_filters_body["totalMaintainers"]
+                .as_u64()
+                .unwrap_or(0)
+                >= 1
+        );
+        assert!(publisher_filters_body["verification"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["value"].as_str() == Some("verified")
+                && item["count"].as_u64().unwrap_or(0) >= 1));
+
+        let (invalid_publishers_status, invalid_publishers_body) =
+            route_request(&req("GET", "/publishers?verified=maybe"), &registry, &state);
+        assert_eq!(invalid_publishers_status, 400);
+        assert_eq!(
+            invalid_publishers_body["error"].as_str(),
+            Some("invalid verified filter")
+        );
 
         let (search_status, search_body) =
             route_request(&req("GET", "/servers?q=github"), &registry, &state);

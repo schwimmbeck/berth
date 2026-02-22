@@ -125,6 +125,8 @@ Registry API endpoints:
 - `POST /publish/submissions/<id>/status` (JSON body: `status`, optional `note`)
 - `GET /publish/review-events?status=<status>&server=<name>&submission=<id>&offset=<n>&limit=<n>`
 - `GET /publish/review-events/filters`
+- `GET /publishers?maintainer=<name>&verified=<verified|unverified|true|false>&offset=<n>&limit=<n>`
+- `GET /publishers/filters`
 - `POST /servers/<name>/star`
 - `POST /servers/<name>/report`
 - `GET /publishers/verified`

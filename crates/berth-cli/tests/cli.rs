@@ -615,7 +615,7 @@ fn registry_api_serves_health_search_and_downloads() {
             "--bind",
             "127.0.0.1:0",
             "--max-requests",
-            "40",
+            "42",
         ])
         .stdout(Stdio::piped())
         .spawn()
@@ -1021,6 +1021,32 @@ fn registry_api_serves_health_search_and_downloads() {
         .unwrap()
         .iter()
         .any(|v| v.as_str() == Some("anthropic")));
+
+    let (publishers_status, publishers_body) =
+        http_get(&addr, "/publishers?verified=verified&maintainer=anth");
+    assert_eq!(publishers_status, 200);
+    let publishers: serde_json::Value = serde_json::from_str(&publishers_body).unwrap();
+    assert_eq!(publishers["count"].as_u64(), Some(1));
+    assert_eq!(
+        publishers["publishers"][0]["maintainerNormalized"].as_str(),
+        Some("anthropic")
+    );
+    assert_eq!(
+        publishers["publishers"][0]["verified"].as_bool(),
+        Some(true)
+    );
+
+    let (publisher_filters_status, publisher_filters_body) = http_get(&addr, "/publishers/filters");
+    assert_eq!(publisher_filters_status, 200);
+    let publisher_filters: serde_json::Value =
+        serde_json::from_str(&publisher_filters_body).unwrap();
+    assert!(publisher_filters["totalMaintainers"].as_u64().unwrap_or(0) >= 1);
+    assert!(publisher_filters["verification"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["value"].as_str() == Some("verified")
+            && item["count"].as_u64().unwrap_or(0) >= 1));
 
     let (badged_search_status, badged_search_body) = http_get(&addr, "/servers?q=github");
     assert_eq!(badged_search_status, 200);

@@ -18,6 +18,7 @@ use crate::paths;
 use crate::permission_filter::{
     filter_env_map, load_permission_overrides, validate_network_permissions,
 };
+use crate::policy_engine::{enforce_global_policy, load_global_policy, GlobalPolicy};
 use crate::runtime_policy::parse_runtime_policy;
 use crate::sandbox_policy::parse_sandbox_policy;
 use crate::sandbox_runtime::apply_sandbox_runtime;
@@ -77,6 +78,13 @@ pub fn execute() {
     };
     let runtime = RuntimeManager::new(berth_home);
     let registry = Registry::from_seed();
+    let global_policy = match load_global_policy() {
+        Ok(policy) => policy,
+        Err(msg) => {
+            eprintln!("{} {}", "✗".red().bold(), msg);
+            process::exit(1);
+        }
+    };
 
     println!("{} MCP server status:\n", "✓".green().bold());
     println!(
@@ -129,7 +137,7 @@ pub fn execute() {
         };
         let version = installed.server.version.clone();
 
-        let spec = match build_process_spec(&name, &installed, &registry) {
+        let spec = match build_process_spec(&name, &installed, &registry, &global_policy) {
             Ok(spec) => Some(spec),
             Err(_) => {
                 had_error = true;
@@ -184,6 +192,7 @@ fn build_process_spec(
     name: &str,
     installed: &InstalledServer,
     registry: &Registry,
+    global_policy: &GlobalPolicy,
 ) -> Result<ProcessSpec, String> {
     let mut env = BTreeMap::new();
 
@@ -213,6 +222,7 @@ fn build_process_spec(
     }
 
     let overrides = load_permission_overrides(name)?;
+    enforce_global_policy(name, &installed.permissions, &overrides, global_policy)?;
     validate_network_permissions(name, &installed.permissions.network, &overrides)?;
     filter_env_map(&mut env, &installed.permissions.env, &overrides);
     let mut policy = parse_runtime_policy(&installed.config)?;

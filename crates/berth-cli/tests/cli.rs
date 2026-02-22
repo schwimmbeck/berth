@@ -180,6 +180,25 @@ fn write_global_policy(tmp: &std::path::Path, content: &str) {
     std::fs::write(path, content).unwrap();
 }
 
+fn write_runtime_state_for_status_autorestart(tmp: &std::path::Path, server: &str) {
+    let path = tmp
+        .join(".berth")
+        .join("runtime")
+        .join(format!("{server}.toml"));
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let state = r#"
+status = "running"
+updated_at_epoch_secs = 1
+pid = 999999
+command = "stale"
+args = []
+auto_restart_enabled = true
+max_restarts = 1
+restart_attempts = 0
+"#;
+    std::fs::write(path, state.trim_start()).unwrap();
+}
+
 fn write_github_raw_manifest(
     raw_base: &std::path::Path,
     repo: &str,
@@ -2236,6 +2255,42 @@ fn status_auto_restart_recovers_crash_when_enabled() {
         thread::sleep(Duration::from_millis(50));
     }
     assert!(restart_seen);
+}
+
+#[test]
+fn status_does_not_restart_when_org_policy_denies_server() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "token=abc123"])
+        .output()
+        .unwrap();
+    patch_runtime_to_long_running(tmp.path(), "github");
+    write_runtime_state_for_status_autorestart(tmp.path(), "github");
+    write_global_policy(
+        tmp.path(),
+        r#"
+[servers]
+deny = ["github"]
+"#,
+    );
+
+    let status = berth_with_home(tmp.path())
+        .args(["status"])
+        .output()
+        .unwrap();
+    assert!(!status.status.success());
+
+    let audit = berth_with_home(tmp.path())
+        .args(["audit", "github", "--action", "auto-restart"])
+        .output()
+        .unwrap();
+    assert!(audit.status.success());
+    let audit_out = String::from_utf8_lossy(&audit.stdout);
+    assert!(!audit_out.contains("auto-restart"));
 }
 
 #[test]

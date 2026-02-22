@@ -615,7 +615,7 @@ fn registry_api_serves_health_search_and_downloads() {
             "--bind",
             "127.0.0.1:0",
             "--max-requests",
-            "34",
+            "35",
         ])
         .stdout(Stdio::piped())
         .spawn()
@@ -804,6 +804,18 @@ fn registry_api_serves_health_search_and_downloads() {
         Some(1)
     );
 
+    let (submission_filters_status, submission_filters_body) =
+        http_get(&addr, "/publish/submissions/filters");
+    assert_eq!(submission_filters_status, 200);
+    let submission_filters: serde_json::Value =
+        serde_json::from_str(&submission_filters_body).unwrap();
+    assert_eq!(submission_filters["totalSubmissions"].as_u64(), Some(2));
+    assert!(submission_filters["statuses"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["value"].as_str() == Some("pending-manual-review")));
+
     let (submission_detail_status, submission_detail_body) =
         http_get(&addr, "/publish/submissions/github-200.json");
     assert_eq!(submission_detail_status, 200);
@@ -872,6 +884,7 @@ fn registry_api_serves_health_search_and_downloads() {
     assert_eq!(site_submissions_status, 200);
     assert!(site_submissions_headers.contains("Content-Type: text/html; charset=utf-8"));
     assert!(site_submissions_body.contains("Publish Review Queue"));
+    assert!(site_submissions_body.contains("Queue Signals"));
     assert!(site_submissions_body.contains("No submissions matched"));
 
     let (site_submissions_approved_status, _, site_submissions_approved_body) =

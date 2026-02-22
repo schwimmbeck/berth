@@ -1270,6 +1270,15 @@ fn render_site_submissions_page(query: Option<&str>, state: &ApiState) -> String
     }
     let submission_query = submission_query_pairs.join("&");
     let (_status, payload) = route_publish_submissions(Some(&submission_query), state);
+    let (_filters_status, filters_payload) = route_publish_submission_filters(state);
+    let status_facets = filters_payload["statuses"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let server_facets = filters_payload["servers"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
 
     let total = payload["total"].as_u64().unwrap_or(0) as usize;
     let offset = payload["offset"].as_u64().unwrap_or(0) as usize;
@@ -1305,6 +1314,61 @@ fn render_site_submissions_page(query: Option<&str>, state: &ApiState) -> String
         "<p>Browse locally queued submissions produced by `berth publish` for manual review.</p>",
     );
     content.push_str("</header>");
+
+    content.push_str("<section class=\"panel\">");
+    content.push_str("<h2>Queue Signals</h2>");
+    let total_submissions = filters_payload["totalSubmissions"].as_u64().unwrap_or(0);
+    content.push_str(&format!(
+        "<p class=\"meta\"><span>total submissions {}</span></p>",
+        total_submissions
+    ));
+    if !status_facets.is_empty() {
+        content.push_str("<h3>By Status</h3><ul class=\"trending-list\">");
+        for facet in status_facets {
+            let value = facet["value"].as_str().unwrap_or_default();
+            let count = facet["count"].as_u64().unwrap_or(0);
+            if value.is_empty() {
+                continue;
+            }
+            let href = build_site_submissions_path(&SiteSubmissionsUrlParams {
+                status: Some(value),
+                server: server_filter.as_deref(),
+                limit,
+                offset: 0,
+            });
+            content.push_str(&format!(
+                "<li><a href=\"{}\">{}</a> <span class=\"meta\">({})</span></li>",
+                html_escape(&href),
+                html_escape(value),
+                count
+            ));
+        }
+        content.push_str("</ul>");
+    }
+    if !server_facets.is_empty() {
+        content.push_str("<h3>By Server</h3><ul class=\"trending-list\">");
+        for facet in server_facets {
+            let value = facet["value"].as_str().unwrap_or_default();
+            let count = facet["count"].as_u64().unwrap_or(0);
+            if value.is_empty() {
+                continue;
+            }
+            let href = build_site_submissions_path(&SiteSubmissionsUrlParams {
+                status: status_filter.as_deref(),
+                server: Some(value),
+                limit,
+                offset: 0,
+            });
+            content.push_str(&format!(
+                "<li><a href=\"{}\">{}</a> <span class=\"meta\">({})</span></li>",
+                html_escape(&href),
+                html_escape(value),
+                count
+            ));
+        }
+        content.push_str("</ul>");
+    }
+    content.push_str("</section>");
 
     content.push_str("<section class=\"panel\">");
     content.push_str("<form class=\"filters\" method=\"GET\" action=\"/site/submissions\">");
@@ -2368,6 +2432,17 @@ fn route_request(request: &HttpRequest, registry: &Registry, state: &ApiState) -
             }),
         );
     }
+    if path == "/publish/submissions/filters" {
+        if method != "GET" {
+            return (
+                405,
+                json!({
+                    "error": "method not allowed"
+                }),
+            );
+        }
+        return route_publish_submission_filters(state);
+    }
     if let Some(raw_submission_id) = path
         .strip_prefix("/publish/submissions/")
         .and_then(|rest| rest.strip_suffix("/status"))
@@ -3001,6 +3076,56 @@ fn route_publish_submissions(query: Option<&str>, state: &ApiState) -> (u16, Val
                         "server": server_filter
                     },
                     "submissions": submissions
+                }),
+            )
+        }
+        Err(e) => (
+            500,
+            json!({
+                "error": "internal error",
+                "detail": e
+            }),
+        ),
+    }
+}
+
+fn route_publish_submission_filters(state: &ApiState) -> (u16, Value) {
+    match state.list_publish_submissions() {
+        Ok(submissions) => {
+            let mut status_counts = std::collections::BTreeMap::<String, u64>::new();
+            let mut server_counts = std::collections::BTreeMap::<String, u64>::new();
+            for submission in &submissions {
+                *status_counts.entry(submission.status.clone()).or_insert(0) += 1;
+                *server_counts
+                    .entry(submission.server.name.clone())
+                    .or_insert(0) += 1;
+            }
+
+            let statuses = status_counts
+                .into_iter()
+                .map(|(value, count)| {
+                    json!({
+                        "value": value,
+                        "count": count
+                    })
+                })
+                .collect::<Vec<_>>();
+            let servers = server_counts
+                .into_iter()
+                .map(|(value, count)| {
+                    json!({
+                        "value": value,
+                        "count": count
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            (
+                200,
+                json!({
+                    "totalSubmissions": submissions.len(),
+                    "statuses": statuses,
+                    "servers": servers
                 }),
             )
         }
@@ -4502,6 +4627,7 @@ mod tests {
         .unwrap();
         assert_eq!(submissions_status, 200);
         assert!(submissions_body.contains("Publish Review Queue"));
+        assert!(submissions_body.contains("Queue Signals"));
         assert!(submissions_body.contains("/site/servers/github"));
         assert!(submissions_body.contains("pending-manual-review"));
         assert!(submissions_body.contains("submission-status-btn"));
@@ -4894,6 +5020,28 @@ mod tests {
             pending_body["submissions"][0]["server"]["name"].as_str(),
             Some("github")
         );
+
+        let (filters_status, filters_body) = route_request(
+            &req("GET", "/publish/submissions/filters"),
+            &registry,
+            &state,
+        );
+        assert_eq!(filters_status, 200);
+        assert_eq!(filters_body["totalSubmissions"].as_u64(), Some(2));
+        assert!(filters_body["statuses"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| {
+                item["value"].as_str() == Some("pending-manual-review")
+                    && item["count"].as_u64() == Some(1)
+            }));
+        assert!(filters_body["servers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["value"].as_str() == Some("github")
+                && item["count"].as_u64() == Some(1)));
     }
 
     #[test]

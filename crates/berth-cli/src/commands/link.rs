@@ -16,6 +16,7 @@ use berth_registry::Registry;
 
 use crate::paths;
 use crate::permission_filter::{filter_env_map, load_permission_overrides};
+use crate::policy_engine::{enforce_global_policy, load_global_policy};
 use crate::secrets::resolve_config_value;
 
 #[derive(Serialize)]
@@ -25,6 +26,11 @@ struct ClientServerConfig {
     args: Vec<String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     env: BTreeMap<String, String>,
+}
+
+struct LinkableServers {
+    servers: Vec<(String, ClientServerConfig)>,
+    skipped_by_policy: Vec<String>,
 }
 
 /// Executes the `berth link` command.
@@ -50,7 +56,7 @@ pub fn execute(client: &str) {
 
 /// Links all installable Berth servers into a supported client config file.
 fn link_client(client: &str, config_path: &Path) {
-    let linked_servers = match load_linkable_servers() {
+    let linked = match load_linkable_servers() {
         Ok(servers) => servers,
         Err(msg) => {
             eprintln!("{} {}", "✗".red().bold(), msg);
@@ -139,7 +145,7 @@ fn link_client(client: &str, config_path: &Path) {
         .as_object_mut()
         .expect("checked object above; qed");
 
-    for (name, cfg) in &linked_servers {
+    for (name, cfg) in &linked.servers {
         let value = match serde_json::to_value(cfg) {
             Ok(v) => v,
             Err(e) => {
@@ -182,8 +188,15 @@ fn link_client(client: &str, config_path: &Path) {
         "✓".green().bold(),
         "berth".bold(),
         client.cyan(),
-        linked_servers.len()
+        linked.servers.len()
     );
+    if !linked.skipped_by_policy.is_empty() {
+        eprintln!(
+            "{} Skipped by org policy: {}",
+            "!".yellow().bold(),
+            linked.skipped_by_policy.join(", ").cyan()
+        );
+    }
     println!("  Config: {}", config_path.display());
     if let Some(backup) = backup_path {
         println!("  Backup: {}", backup.display());
@@ -191,7 +204,7 @@ fn link_client(client: &str, config_path: &Path) {
 }
 
 /// Loads installed server definitions and converts them to client entries.
-fn load_linkable_servers() -> Result<Vec<(String, ClientServerConfig)>, String> {
+fn load_linkable_servers() -> Result<LinkableServers, String> {
     let servers_dir = paths::berth_servers_dir().ok_or("Could not determine home directory.")?;
 
     if !servers_dir.exists() {
@@ -210,7 +223,9 @@ fn load_linkable_servers() -> Result<Vec<(String, ClientServerConfig)>, String> 
 
     entries.sort_by_key(|e| e.path());
     let registry = Registry::from_seed();
+    let policy = load_global_policy()?;
     let mut out = Vec::new();
+    let mut skipped_by_policy = Vec::new();
 
     for entry in &entries {
         let path = entry.path();
@@ -267,6 +282,10 @@ fn load_linkable_servers() -> Result<Vec<(String, ClientServerConfig)>, String> 
             }
         }
         let overrides = load_permission_overrides(&name)?;
+        if enforce_global_policy(&name, &installed.permissions, &overrides, &policy).is_err() {
+            skipped_by_policy.push(name);
+            continue;
+        }
         filter_env_map(&mut env, &installed.permissions.env, &overrides);
 
         out.push((
@@ -279,7 +298,10 @@ fn load_linkable_servers() -> Result<Vec<(String, ClientServerConfig)>, String> 
         ));
     }
 
-    Ok(out)
+    Ok(LinkableServers {
+        servers: out,
+        skipped_by_policy,
+    })
 }
 
 /// Returns a deterministic backup path next to the client config file.

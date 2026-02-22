@@ -2517,6 +2517,42 @@ fn link_respects_env_permission_revoke() {
 }
 
 #[test]
+fn link_skips_server_denied_by_org_policy() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "token=abc123"])
+        .output()
+        .unwrap();
+    write_global_policy(
+        tmp.path(),
+        r#"
+[servers]
+deny = ["github"]
+"#,
+    );
+
+    let output = berth_with_home(tmp.path())
+        .args(["link", "claude-desktop"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Skipped by org policy"));
+    assert!(stderr.contains("github"));
+
+    let config_path = tmp
+        .path()
+        .join(".berth/clients/claude-desktop/claude_desktop_config.json");
+    let content = std::fs::read_to_string(config_path).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&content).unwrap();
+    assert!(json["mcpServers"]["github"].is_null());
+}
+
+#[test]
 fn unlink_windsurf_removes_linked_servers() {
     let tmp = tempfile::tempdir().unwrap();
     berth_with_home(tmp.path())

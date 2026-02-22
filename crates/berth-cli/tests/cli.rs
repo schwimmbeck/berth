@@ -3005,6 +3005,88 @@ fn audit_export_jsonl_output_writes_line_delimited_file() {
     }
 }
 
+#[test]
+fn analytics_summarizes_audit_events_for_server() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "token=abc123"])
+        .output()
+        .unwrap();
+    patch_runtime_to_long_running(tmp.path(), "github");
+    berth_with_home(tmp.path())
+        .args(["start", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["stop", "github"])
+        .output()
+        .unwrap();
+
+    let output = berth_with_home(tmp.path())
+        .args(["analytics", "github", "--top", "3"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Audit analytics"));
+    assert!(stdout.contains("total events"));
+    assert!(stdout.contains("Top actions"));
+    assert!(stdout.contains("start"));
+    assert!(stdout.contains("stop"));
+}
+
+#[test]
+fn analytics_json_output_is_machine_readable() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "token=abc123"])
+        .output()
+        .unwrap();
+    patch_runtime_to_long_running(tmp.path(), "github");
+    berth_with_home(tmp.path())
+        .args(["start", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["stop", "github"])
+        .output()
+        .unwrap();
+
+    let output = berth_with_home(tmp.path())
+        .args(["analytics", "github", "--json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(json["totalEvents"].as_u64().unwrap_or(0) >= 2);
+    assert_eq!(json["uniqueServers"].as_u64(), Some(1));
+    assert!(json["estimatedCostUsd"].as_f64().unwrap_or(0.0) > 0.0);
+    assert!(json["topActions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["value"].as_str() == Some("start")));
+}
+
+#[test]
+fn analytics_invalid_since_exits_1() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = berth_with_home(tmp.path())
+        .args(["analytics", "--since", "bad"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+}
+
 // --- proxy ---
 
 #[test]

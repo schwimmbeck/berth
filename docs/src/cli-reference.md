@@ -39,6 +39,7 @@ Security commands:
 ```text
 berth permissions <server>
 berth audit [server]
+berth analytics [server]
 ```
 
 Registry API command:

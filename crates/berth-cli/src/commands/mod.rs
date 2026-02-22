@@ -1,5 +1,6 @@
 //! CLI subcommand declarations and dispatch.
 
+pub mod analytics;
 pub mod audit;
 pub mod config;
 pub mod import_github;
@@ -182,6 +183,24 @@ pub enum Commands {
         export: Option<String>,
     },
 
+    /// Summarize audit usage and estimated runtime cost
+    Analytics {
+        /// Server name (omit for all)
+        server: Option<String>,
+
+        /// Summarize entries since duration (e.g. 1h, 24h)
+        #[arg(long)]
+        since: Option<String>,
+
+        /// Number of top actions/servers to display
+        #[arg(long, default_value = "5")]
+        top: u32,
+
+        /// Print analytics summary as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Link Berth to an AI client (e.g. claude-desktop, cursor, continue, vscode)
     Link {
         /// Client name
@@ -290,6 +309,12 @@ pub fn execute(command: Commands) {
             json,
             export.as_deref(),
         ),
+        Commands::Analytics {
+            server,
+            since,
+            top,
+            json,
+        } => analytics::execute(server.as_deref(), since.as_deref(), top, json),
         Commands::Link { client } => link::execute(&client),
         Commands::Unlink { client } => unlink::execute(&client),
         Commands::Proxy { server } => proxy::execute(&server),

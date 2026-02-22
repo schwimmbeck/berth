@@ -152,6 +152,15 @@ struct SiteSubmissionsUrlParams<'a> {
     offset: usize,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct SiteReviewEventsUrlParams<'a> {
+    status: Option<&'a str>,
+    server: Option<&'a str>,
+    submission: Option<&'a str>,
+    limit: usize,
+    offset: usize,
+}
+
 #[derive(Debug, Deserialize)]
 struct QueueSubmissionFile {
     submitted_at_epoch_secs: u64,
@@ -813,7 +822,7 @@ fn now_epoch_secs() -> u64 {
         .as_secs()
 }
 
-/// Routes browser-facing local website paths (`/site`, `/site/reports`, `/site/submissions`, `/site/submissions/<id>`, `/site/servers/<name>`).
+/// Routes browser-facing local website paths (`/site`, `/site/reports`, `/site/submissions`, `/site/review-events`, `/site/submissions/<id>`, `/site/servers/<name>`).
 fn route_website_request(
     request: &HttpRequest,
     registry: &Registry,
@@ -833,6 +842,9 @@ fn route_website_request(
         "/site/reports" | "/site/reports/" => Some((200, render_site_reports_page(query, state))),
         "/site/submissions" | "/site/submissions/" => {
             Some((200, render_site_submissions_page(query, state)))
+        }
+        "/site/review-events" | "/site/review-events/" => {
+            Some((200, render_site_review_events_page(query, state)))
         }
         _ => {
             if let Some(raw_submission_id) = path.strip_prefix("/site/submissions/") {
@@ -1158,6 +1170,7 @@ fn render_site_catalog_page(query: Option<&str>, registry: &Registry, state: &Ap
     }
     content.push_str("<p><a href=\"/site/reports\">Open moderation reports feed</a></p>");
     content.push_str("<p><a href=\"/site/submissions\">Open publish review queue</a></p>");
+    content.push_str("<p><a href=\"/site/review-events\">Open publish review event feed</a></p>");
     content.push_str("</section>");
 
     content.push_str("<section class=\"panel\">");
@@ -1415,6 +1428,266 @@ fn render_site_reports_page(query: Option<&str>, state: &ApiState) -> String {
     render_site_shell("Berth Registry Reports", &content)
 }
 
+/// Renders a publish review-event feed at `/site/review-events`.
+fn render_site_review_events_page(query: Option<&str>, state: &ApiState) -> String {
+    let status_filter = query_param(query, "status")
+        .map(url_decode)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let server_filter = query_param(query, "server")
+        .map(url_decode)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let submission_filter = query_param(query, "submission")
+        .or_else(|| query_param(query, "submissionId"))
+        .map(url_decode)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let limit = parse_usize_param(query, "limit")
+        .unwrap_or(25)
+        .clamp(1, 200);
+    let requested_offset = parse_usize_param(query, "offset").unwrap_or(0);
+
+    let mut review_query_pairs = vec![
+        format!("limit={limit}"),
+        format!("offset={requested_offset}"),
+    ];
+    if let Some(status) = status_filter.as_deref() {
+        review_query_pairs.push(format!("status={}", url_encode(status)));
+    }
+    if let Some(server) = server_filter.as_deref() {
+        review_query_pairs.push(format!("server={}", url_encode(server)));
+    }
+    if let Some(submission) = submission_filter.as_deref() {
+        review_query_pairs.push(format!("submission={}", url_encode(submission)));
+    }
+    let review_query = review_query_pairs.join("&");
+    let (_status, payload) = route_publish_review_events(Some(&review_query), state);
+    let (_filters_status, filters_payload) = route_publish_review_event_filters(state);
+    let status_facets = filters_payload["statuses"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let server_facets = filters_payload["servers"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let submission_facets = filters_payload["submissions"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+
+    let total = payload["total"].as_u64().unwrap_or(0) as usize;
+    let offset = payload["offset"].as_u64().unwrap_or(0) as usize;
+    let limit = payload["limit"].as_u64().unwrap_or(limit as u64) as usize;
+    let count = payload["count"].as_u64().unwrap_or(0) as usize;
+    let showing_start = if count == 0 { 0 } else { offset + 1 };
+    let showing_end = offset + count;
+    let has_prev = offset > 0;
+    let has_next = showing_end < total;
+    let events = payload["events"].as_array().cloned().unwrap_or_default();
+
+    let prev_href = build_site_review_events_path(&SiteReviewEventsUrlParams {
+        status: status_filter.as_deref(),
+        server: server_filter.as_deref(),
+        submission: submission_filter.as_deref(),
+        limit,
+        offset: offset.saturating_sub(limit),
+    });
+    let next_href = build_site_review_events_path(&SiteReviewEventsUrlParams {
+        status: status_filter.as_deref(),
+        server: server_filter.as_deref(),
+        submission: submission_filter.as_deref(),
+        limit,
+        offset: offset.saturating_add(limit),
+    });
+
+    let mut content = String::new();
+    content.push_str("<header class=\"hero\">");
+    content.push_str("<p class=\"kicker\"><a href=\"/site\">Back to catalog</a></p>");
+    content.push_str("<h1>Publish Review Events</h1>");
+    content.push_str(
+        "<p>Track status transitions and reviewer notes for local publish submissions.</p>",
+    );
+    content.push_str("</header>");
+
+    content.push_str("<section class=\"panel\">");
+    content.push_str("<h2>Feed Signals</h2>");
+    let total_events = filters_payload["totalEvents"].as_u64().unwrap_or(0);
+    content.push_str(&format!(
+        "<p class=\"meta\"><span>total events {}</span></p>",
+        total_events
+    ));
+    if !status_facets.is_empty() {
+        content.push_str("<h3>By Status</h3><ul class=\"trending-list\">");
+        for facet in status_facets {
+            let value = facet["value"].as_str().unwrap_or_default();
+            let count = facet["count"].as_u64().unwrap_or(0);
+            if value.is_empty() {
+                continue;
+            }
+            let href = build_site_review_events_path(&SiteReviewEventsUrlParams {
+                status: Some(value),
+                server: server_filter.as_deref(),
+                submission: submission_filter.as_deref(),
+                limit,
+                offset: 0,
+            });
+            content.push_str(&format!(
+                "<li><a href=\"{}\">{}</a> <span class=\"meta\">({})</span></li>",
+                html_escape(&href),
+                html_escape(value),
+                count
+            ));
+        }
+        content.push_str("</ul>");
+    }
+    if !server_facets.is_empty() {
+        content.push_str("<h3>By Server</h3><ul class=\"trending-list\">");
+        for facet in server_facets {
+            let value = facet["value"].as_str().unwrap_or_default();
+            let count = facet["count"].as_u64().unwrap_or(0);
+            if value.is_empty() {
+                continue;
+            }
+            let href = build_site_review_events_path(&SiteReviewEventsUrlParams {
+                status: status_filter.as_deref(),
+                server: Some(value),
+                submission: submission_filter.as_deref(),
+                limit,
+                offset: 0,
+            });
+            content.push_str(&format!(
+                "<li><a href=\"{}\">{}</a> <span class=\"meta\">({})</span></li>",
+                html_escape(&href),
+                html_escape(value),
+                count
+            ));
+        }
+        content.push_str("</ul>");
+    }
+    if !submission_facets.is_empty() {
+        content.push_str("<h3>By Submission</h3><ul class=\"trending-list\">");
+        for facet in submission_facets {
+            let value = facet["value"].as_str().unwrap_or_default();
+            let count = facet["count"].as_u64().unwrap_or(0);
+            if value.is_empty() {
+                continue;
+            }
+            let href = build_site_review_events_path(&SiteReviewEventsUrlParams {
+                status: status_filter.as_deref(),
+                server: server_filter.as_deref(),
+                submission: Some(value),
+                limit,
+                offset: 0,
+            });
+            content.push_str(&format!(
+                "<li><a href=\"{}\">{}</a> <span class=\"meta\">({})</span></li>",
+                html_escape(&href),
+                html_escape(value),
+                count
+            ));
+        }
+        content.push_str("</ul>");
+    }
+    content.push_str("</section>");
+
+    content.push_str("<section class=\"panel\">");
+    content.push_str("<form class=\"filters\" method=\"GET\" action=\"/site/review-events\">");
+    content.push_str(
+        "<label>Status<input type=\"text\" name=\"status\" placeholder=\"approved\" value=\"",
+    );
+    content.push_str(&html_escape(status_filter.as_deref().unwrap_or_default()));
+    content.push_str("\"></label>");
+    content.push_str(
+        "<label>Server<input type=\"text\" name=\"server\" placeholder=\"github\" value=\"",
+    );
+    content.push_str(&html_escape(server_filter.as_deref().unwrap_or_default()));
+    content.push_str("\"></label>");
+    content.push_str(
+        "<label>Submission<input type=\"text\" name=\"submission\" placeholder=\"github-200.json\" value=\"",
+    );
+    content.push_str(&html_escape(
+        submission_filter.as_deref().unwrap_or_default(),
+    ));
+    content.push_str("\"></label>");
+    content.push_str("<input type=\"hidden\" name=\"offset\" value=\"0\">");
+    content.push_str(
+        "<label>Limit<input type=\"number\" min=\"1\" max=\"200\" name=\"limit\" value=\"",
+    );
+    content.push_str(&limit.to_string());
+    content.push_str("\"></label>");
+    content.push_str("<button type=\"submit\">Apply</button>");
+    content.push_str("</form>");
+    content.push_str(&format!(
+        "<p class=\"summary\">Showing <strong>{showing_start}-{showing_end}</strong> of <strong>{total}</strong> review events.</p>",
+    ));
+    content.push_str("<div class=\"pagination\">");
+    if has_prev {
+        content.push_str(&format!(
+            "<a href=\"{}\">Previous</a>",
+            html_escape(&prev_href)
+        ));
+    } else {
+        content.push_str("<span class=\"pagination-disabled\">Previous</span>");
+    }
+    if has_next {
+        content.push_str(&format!("<a href=\"{}\">Next</a>", html_escape(&next_href)));
+    } else {
+        content.push_str("<span class=\"pagination-disabled\">Next</span>");
+    }
+    content.push_str("</div>");
+    content.push_str("</section>");
+
+    content.push_str("<section class=\"panel\">");
+    content.push_str("<h2>Events</h2>");
+    if events.is_empty() {
+        content.push_str("<p class=\"empty\">No review events matched the current filters.</p>");
+    } else {
+        content.push_str("<ul class=\"related-list\">");
+        for event in events {
+            let server = event["server"].as_str().unwrap_or_default();
+            let submission_id = event["submissionId"].as_str().unwrap_or_default();
+            let previous_status = event["previousStatus"].as_str().unwrap_or("unknown");
+            let status = event["status"].as_str().unwrap_or("unknown");
+            let timestamp = event["timestampEpochSecs"].as_u64().unwrap_or(0);
+            let note = event["note"].as_str().unwrap_or_default();
+            let server_href = format!("/site/servers/{}", url_encode(server));
+            let submission_href = format!("/site/submissions/{}", url_encode(submission_id));
+            content.push_str("<li>");
+            if note.is_empty() {
+                content.push_str(&format!(
+                    "<a href=\"{}\">{}</a> <span class=\"meta\">submission <a href=\"{}\">{}</a> · {} → {} · epoch {}</span>",
+                    html_escape(&server_href),
+                    html_escape(server),
+                    html_escape(&submission_href),
+                    html_escape(submission_id),
+                    html_escape(previous_status),
+                    html_escape(status),
+                    timestamp
+                ));
+            } else {
+                content.push_str(&format!(
+                    "<a href=\"{}\">{}</a> <span class=\"meta\">submission <a href=\"{}\">{}</a> · {} → {} · epoch {}</span><p>{}</p>",
+                    html_escape(&server_href),
+                    html_escape(server),
+                    html_escape(&submission_href),
+                    html_escape(submission_id),
+                    html_escape(previous_status),
+                    html_escape(status),
+                    timestamp,
+                    html_escape(note)
+                ));
+            }
+            content.push_str("</li>");
+        }
+        content.push_str("</ul>");
+    }
+    content.push_str("</section>");
+
+    render_site_shell("Berth Publish Review Events", &content)
+}
+
 /// Renders a publish-review queue page at `/site/submissions`.
 fn render_site_submissions_page(query: Option<&str>, state: &ApiState) -> String {
     let status_filter = query_param(query, "status")
@@ -1477,6 +1750,13 @@ fn render_site_submissions_page(query: Option<&str>, state: &ApiState) -> String
         limit,
         offset: offset.saturating_add(limit),
     });
+    let review_events_href = build_site_review_events_path(&SiteReviewEventsUrlParams {
+        status: status_filter.as_deref(),
+        server: server_filter.as_deref(),
+        submission: None,
+        limit: 25,
+        offset: 0,
+    });
 
     let mut content = String::new();
     content.push_str("<header class=\"hero\">");
@@ -1485,6 +1765,10 @@ fn render_site_submissions_page(query: Option<&str>, state: &ApiState) -> String
     content.push_str(
         "<p>Browse locally queued submissions produced by `berth publish` for manual review.</p>",
     );
+    content.push_str(&format!(
+        "<p><a href=\"{}\">Open review event feed</a></p>",
+        html_escape(&review_events_href)
+    ));
     content.push_str("</header>");
 
     content.push_str("<section class=\"panel\">");
@@ -1659,6 +1943,17 @@ fn render_site_submission_detail_page(submission_id: &str, state: &ApiState) -> 
         .unwrap_or(server_name);
     let server_href = format!("/site/servers/{}", url_encode(server_name));
     let queue_href = "/site/submissions";
+    let review_events_href = build_site_review_events_path(&SiteReviewEventsUrlParams {
+        status: None,
+        server: if server_name.is_empty() {
+            None
+        } else {
+            Some(server_name)
+        },
+        submission: Some(submission_id),
+        limit: 25,
+        offset: 0,
+    });
     let current_status = summary["status"].as_str().unwrap_or("unknown");
     let submitted_epoch = summary["submittedAtEpochSecs"].as_u64().unwrap_or(0);
     let quality_passed = summary["qualityChecksPassed"].as_u64().unwrap_or(0);
@@ -1681,6 +1976,10 @@ fn render_site_submission_detail_page(submission_id: &str, state: &ApiState) -> 
         safe_submission_id,
         html_escape(&server_href),
         html_escape(server_display_name)
+    ));
+    content.push_str(&format!(
+        "<p><a href=\"{}\">Open matching review events</a></p>",
+        html_escape(&review_events_href)
     ));
     content.push_str("</header>");
 
@@ -2477,6 +2776,29 @@ fn build_site_submissions_path(params: &SiteSubmissionsUrlParams<'_>) -> String 
         .collect::<Vec<_>>()
         .join("&");
     format!("/site/submissions?{query}")
+}
+
+/// Builds a stable `/site/review-events` URL with current review-event query parameters.
+fn build_site_review_events_path(params: &SiteReviewEventsUrlParams<'_>) -> String {
+    let mut pairs = Vec::new();
+    if let Some(status) = params.status.filter(|value| !value.trim().is_empty()) {
+        pairs.push(("status".to_string(), url_encode(status.trim())));
+    }
+    if let Some(server) = params.server.filter(|value| !value.trim().is_empty()) {
+        pairs.push(("server".to_string(), url_encode(server.trim())));
+    }
+    if let Some(submission) = params.submission.filter(|value| !value.trim().is_empty()) {
+        pairs.push(("submission".to_string(), url_encode(submission.trim())));
+    }
+    pairs.push(("limit".to_string(), params.limit.to_string()));
+    pairs.push(("offset".to_string(), params.offset.to_string()));
+
+    let query = pairs
+        .into_iter()
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect::<Vec<_>>()
+        .join("&");
+    format!("/site/review-events?{query}")
 }
 
 /// Renders one permissions section for detail pages.
@@ -4954,6 +5276,7 @@ mod tests {
         assert!(catalog.contains("Trending Right Now"));
         assert!(catalog.contains("/site/reports"));
         assert!(catalog.contains("/site/submissions"));
+        assert!(catalog.contains("/site/review-events"));
 
         let (detail_status, detail) =
             route_website_request(&req("GET", "/site/servers/github"), &registry, &state).unwrap();
@@ -5011,6 +5334,7 @@ mod tests {
         assert!(submissions_body.contains("data-submission-id=\"github-400.json\""));
         assert!(submissions_body.contains("/site/submissions/github-400.json"));
         assert!(submissions_body.contains("Optional review note"));
+        assert!(submissions_body.contains("/site/review-events"));
 
         let (submission_detail_status, submission_detail_body) = route_website_request(
             &req("GET", "/site/submissions/github-400.json"),
@@ -5022,6 +5346,25 @@ mod tests {
         assert!(submission_detail_body.contains("Submission Detail"));
         assert!(submission_detail_body.contains("Manifest Payload"));
         assert!(submission_detail_body.contains("submission-status-btn"));
+        assert!(submission_detail_body.contains("/site/review-events"));
+
+        let review_update_req = HttpRequest {
+            method: "POST".to_string(),
+            target: "/publish/submissions/github-400.json/status".to_string(),
+            body: "{\"status\":\"approved\",\"note\":\"queue review ok\"}".to_string(),
+        };
+        assert_eq!(route_request(&review_update_req, &registry, &state).0, 200);
+
+        let (review_events_status, review_events_body) = route_website_request(
+            &req("GET", "/site/review-events?status=approved&server=github"),
+            &registry,
+            &state,
+        )
+        .unwrap();
+        assert_eq!(review_events_status, 200);
+        assert!(review_events_body.contains("Publish Review Events"));
+        assert!(review_events_body.contains("/site/submissions/github-400.json"));
+        assert!(review_events_body.contains("queue review ok"));
 
         let (page_status, page_body) =
             route_website_request(&req("GET", "/site?limit=1&offset=1"), &registry, &state)
@@ -5107,6 +5450,23 @@ mod tests {
         assert!(path.contains("server=github"));
         assert!(path.contains("limit=12"));
         assert!(path.contains("offset=24"));
+    }
+
+    #[test]
+    fn build_site_review_events_path_preserves_query_state() {
+        let path = build_site_review_events_path(&SiteReviewEventsUrlParams {
+            status: Some("needs changes"),
+            server: Some("google drive"),
+            submission: Some("google-drive-001.json"),
+            limit: 18,
+            offset: 54,
+        });
+        assert!(path.starts_with("/site/review-events?"));
+        assert!(path.contains("status=needs%20changes"));
+        assert!(path.contains("server=google%20drive"));
+        assert!(path.contains("submission=google-drive-001.json"));
+        assert!(path.contains("limit=18"));
+        assert!(path.contains("offset=54"));
     }
 
     #[test]

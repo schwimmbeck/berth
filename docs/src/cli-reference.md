@@ -76,6 +76,7 @@ Registry API endpoints:
 - `GET /site` (HTML registry catalog with filters, sorting, and pagination query params)
 - `GET /site/reports` (HTML moderation feed with `server`, `reason`, `limit`, `offset`)
 - `GET /site/submissions` (HTML publish review queue with `status`, `server`, `limit`, `offset`)
+- `GET /site/review-events` (HTML publish review event feed with `status`, `server`, `submission`, `limit`, `offset`)
 - `GET /site/submissions/<id>` (HTML submission detail with manifest and quality checks)
 - `GET /site/servers/<name>` (HTML server detail page with install copy button and star/report controls)
 - `OPTIONS <endpoint>` for browser preflight (CORS)

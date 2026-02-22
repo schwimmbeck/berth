@@ -615,7 +615,7 @@ fn registry_api_serves_health_search_and_downloads() {
             "--bind",
             "127.0.0.1:0",
             "--max-requests",
-            "38",
+            "39",
         ])
         .stdout(Stdio::piped())
         .spawn()
@@ -652,6 +652,7 @@ fn registry_api_serves_health_search_and_downloads() {
     assert!(site_body.contains("Overview"));
     assert!(site_body.contains("Trending Right Now"));
     assert!(site_body.contains("/site/submissions"));
+    assert!(site_body.contains("/site/review-events"));
 
     let (site_page_status, _site_page_headers, site_page_body) =
         http_get_with_headers(&addr, "/site?limit=1&offset=1");
@@ -914,6 +915,14 @@ fn registry_api_serves_health_search_and_downloads() {
         .unwrap()
         .iter()
         .any(|item| item["value"].as_str() == Some("github")));
+
+    let (site_review_events_status, site_review_events_headers, site_review_events_body) =
+        http_get_with_headers(&addr, "/site/review-events?status=approved&server=github");
+    assert_eq!(site_review_events_status, 200);
+    assert!(site_review_events_headers.contains("Content-Type: text/html; charset=utf-8"));
+    assert!(site_review_events_body.contains("Publish Review Events"));
+    assert!(site_review_events_body.contains("/site/submissions/github-200.json"));
+    assert!(site_review_events_body.contains("quality checks passed"));
 
     let (site_reports_status, site_reports_headers, site_reports_body) =
         http_get_with_headers(&addr, "/site/reports?server=github");

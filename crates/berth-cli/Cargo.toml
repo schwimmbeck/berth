@@ -10,8 +10,8 @@ name = "berth"
 path = "src/main.rs"
 
 [dependencies]
-berth-registry = { path = "../berth-registry" }
-berth-runtime = { path = "../berth-runtime" }
+berth-registry = { version = "0.1.0", path = "../berth-registry" }
+berth-runtime = { version = "0.1.0", path = "../berth-runtime" }
 clap = { version = "4", features = ["derive"] }
 colored = "3"
 dirs = "6"

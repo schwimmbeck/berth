@@ -2260,13 +2260,14 @@ for (const button of document.querySelectorAll(".submission-status-btn")) {
     const submissionId = button.getAttribute("data-submission-id");
     const nextStatus = button.getAttribute("data-next-status");
     if (!submissionId || !nextStatus) return;
+    const note = window.prompt("Optional review note:", "") || "";
     try {
       const response = await fetch(
         `/publish/submissions/${encodeURIComponent(submissionId)}/status`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: nextStatus })
+          body: JSON.stringify({ status: nextStatus, note })
         }
       );
       if (!response.ok) throw new Error();
@@ -4756,6 +4757,7 @@ mod tests {
         assert!(submissions_body.contains("submission-status-btn"));
         assert!(submissions_body.contains("data-submission-id=\"github-400.json\""));
         assert!(submissions_body.contains("/site/submissions/github-400.json"));
+        assert!(submissions_body.contains("Optional review note"));
 
         let (submission_detail_status, submission_detail_body) = route_website_request(
             &req("GET", "/site/submissions/github-400.json"),

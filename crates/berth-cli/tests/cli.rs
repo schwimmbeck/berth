@@ -905,6 +905,7 @@ fn registry_api_serves_health_search_and_downloads() {
     assert!(site_submissions_approved_body.contains("/site/servers/github"));
     assert!(site_submissions_approved_body.contains("submission-status-btn"));
     assert!(site_submissions_approved_body.contains("/site/submissions/github-200.json"));
+    assert!(site_submissions_approved_body.contains("Optional review note"));
 
     let (site_submission_detail_status, _, site_submission_detail_body) =
         http_get_with_headers(&addr, "/site/submissions/github-200.json");

@@ -2872,6 +2872,80 @@ fn permissions_accepts_valid_filesystem_and_exec_permission_override() {
 }
 
 #[test]
+fn policy_init_writes_template() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = berth_with_home(tmp.path())
+        .args(["policy", "--init"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let policy_path = tmp.path().join(".berth").join("policy.toml");
+    assert!(policy_path.exists());
+    let content = std::fs::read_to_string(policy_path).unwrap();
+    assert!(content.contains("[servers]"));
+    assert!(content.contains("[permissions]"));
+}
+
+#[test]
+fn policy_set_and_show_json() {
+    let tmp = tempfile::tempdir().unwrap();
+    let set_network = berth_with_home(tmp.path())
+        .args(["policy", "--set", "permissions.deny_network_wildcard=true"])
+        .output()
+        .unwrap();
+    assert!(set_network.status.success());
+
+    let set_servers = berth_with_home(tmp.path())
+        .args(["policy", "--set", "servers.deny=github,filesystem"])
+        .output()
+        .unwrap();
+    assert!(set_servers.status.success());
+
+    let output = berth_with_home(tmp.path())
+        .args(["policy", "--json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json["permissions"]["deny_network_wildcard"].as_bool(),
+        Some(true)
+    );
+    assert!(json["servers"]["deny"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|entry| entry.as_str() == Some("github")));
+}
+
+#[test]
+fn policy_check_reports_denied_server() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+    write_global_policy(
+        tmp.path(),
+        r#"
+[servers]
+deny = ["github"]
+"#,
+    );
+
+    let output = berth_with_home(tmp.path())
+        .args(["policy", "github"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Policy denied"));
+    assert!(stderr.contains("server is blocked"));
+}
+
+#[test]
 fn audit_shows_runtime_events_for_server() {
     let tmp = tempfile::tempdir().unwrap();
     berth_with_home(tmp.path())

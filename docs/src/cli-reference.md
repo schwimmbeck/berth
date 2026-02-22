@@ -38,6 +38,7 @@ Security commands:
 
 ```text
 berth permissions <server>
+berth policy [server]
 berth audit [server]
 berth analytics [server]
 ```

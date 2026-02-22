@@ -10,6 +10,7 @@ pub mod link;
 pub mod list;
 pub mod logs;
 pub mod permissions;
+pub mod policy;
 pub mod proxy;
 pub mod publish;
 pub mod registry_api;
@@ -161,6 +162,24 @@ pub enum Commands {
         export_json: bool,
     },
 
+    /// Show, update, or validate global org policy
+    Policy {
+        /// Optional installed server name to validate against policy
+        server: Option<String>,
+
+        /// Update one policy key (key=value)
+        #[arg(long)]
+        set: Option<String>,
+
+        /// Initialize `~/.berth/policy.toml` with defaults
+        #[arg(long)]
+        init: bool,
+
+        /// Print policy as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Show audit log of MCP tool calls
     Audit {
         /// Server name (omit for all)
@@ -296,6 +315,12 @@ pub fn execute(command: Commands) {
             reset,
             export_json,
         ),
+        Commands::Policy {
+            server,
+            set,
+            init,
+            json,
+        } => policy::execute(server.as_deref(), set.as_deref(), init, json),
         Commands::Audit {
             server,
             since,

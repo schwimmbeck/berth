@@ -96,6 +96,7 @@ berth status                   Show MCP server status (state, PID, memory)
 berth logs <server>            Show recent MCP server logs
 
 berth permissions <server>     Show/manage/export MCP server permissions (--grant/--revoke/--reset/--export)
+berth policy [server]          Show/manage/validate org policy (--init/--set/--json)
 berth audit [server]           View/export runtime audit log (supports --since, --action, --json, and --export)
 berth analytics [server]       Summarize audit usage and estimated runtime cost (--since, --top, --json)
 berth link <client>            Link Berth-managed servers to claude-desktop, cursor, windsurf, continue, or vscode

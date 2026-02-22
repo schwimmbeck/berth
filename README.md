@@ -173,6 +173,18 @@ Sandbox runtime note:
 - On Linux, `berth.sandbox=basic` applies Landlock filesystem restrictions via `landlock-restrict` when available and also applies `setpriv --no-new-privs` hardening when available.
 - On macOS, `berth.sandbox=basic` uses `sandbox-exec` with a generated profile (default-deny baseline, declared write-path allowances).
 
+Org policy file (optional):
+- Path: `~/.berth/policy.toml`
+- Deny specific servers:
+  - `[servers]`
+  - `deny = ["github"]`
+- Deny risky wildcard/write permissions at launch:
+  - `[permissions]`
+  - `deny_network_wildcard = true`
+  - `deny_env_wildcard = true`
+  - `deny_filesystem_write = true`
+  - `deny_exec_wildcard = true`
+
 Registry source overrides (optional):
 - `BERTH_REGISTRY_INDEX_URL` fetch registry JSON via `curl`/`wget` and use it for lookups.
 - `BERTH_REGISTRY_INDEX_FILE` load registry JSON from a local file path.
@@ -191,6 +203,9 @@ Security behavior examples:
 - Undeclared network override warning (log-only):
   - `berth permissions github --grant network:example.com:443`
   - `berth start github` (prints warning and records `permission-network-warning`)
+- Org policy denial:
+  - configure `~/.berth/policy.toml` with `[servers] deny = ["github"]`
+  - `berth start github` (blocked and records `policy-denied`)
 
 ## Supported MCP Servers (seed registry)
 

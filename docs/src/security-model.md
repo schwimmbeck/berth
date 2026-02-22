@@ -36,9 +36,18 @@ berth audit github --export audit.jsonl
 - launch and link flows apply effective env permissions
 - full network revocation blocks launch/proxy and is recorded in audit
 - undeclared network grants emit a warning and audit event (`permission-network-warning`)
+- org policy denials are enforced at launch/restart/proxy and recorded as `policy-denied`
 - `berth.sandbox=basic` uses backend hardening (`landlock-restrict` + `setpriv` on Linux when available, generated `sandbox-exec` profile on macOS)
 - `berth config <server> --set key=value --secure` stores sensitive values in keyring backend (or file backend in test mode)
 - audit data is stored as JSONL for deterministic parsing
+
+Org policy file (`~/.berth/policy.toml`) supports:
+- server deny list via `[servers].deny`
+- wildcard/write restrictions via `[permissions]`:
+  - `deny_network_wildcard`
+  - `deny_env_wildcard`
+  - `deny_filesystem_write`
+  - `deny_exec_wildcard`
 
 ## Behavior Examples
 
@@ -68,3 +77,22 @@ berth audit github --since 24h --json --export audit.json
 ```
 
 Expected behavior: matching events are exported as a JSON array for machine review.
+
+### 4. Enforce org-level deny rules
+
+```toml
+[servers]
+deny = ["github"]
+
+[permissions]
+deny_network_wildcard = true
+deny_env_wildcard = true
+deny_filesystem_write = true
+deny_exec_wildcard = true
+```
+
+```bash
+berth start github
+```
+
+Expected behavior: launch is blocked by policy and a `policy-denied` event is written to audit.

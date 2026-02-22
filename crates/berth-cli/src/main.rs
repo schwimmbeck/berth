@@ -3,6 +3,7 @@
 mod commands;
 pub mod paths;
 pub mod permission_filter;
+pub mod policy_engine;
 pub mod runtime_policy;
 pub mod sandbox_policy;
 pub mod sandbox_runtime;

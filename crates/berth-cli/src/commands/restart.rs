@@ -15,6 +15,9 @@ use crate::permission_filter::{
     filter_env_map, load_permission_overrides, undeclared_network_grants,
     validate_network_permissions, NETWORK_PERMISSION_DENIED_PREFIX,
 };
+use crate::policy_engine::{
+    enforce_global_policy, load_global_policy, GlobalPolicy, POLICY_DENIED_PREFIX,
+};
 use crate::runtime_policy::parse_runtime_policy;
 use crate::sandbox_policy::{parse_sandbox_policy, KEY_SANDBOX_NETWORK};
 use crate::sandbox_runtime::apply_sandbox_runtime;
@@ -88,23 +91,39 @@ pub fn execute(server: &str) {
         }
     };
     let runtime = RuntimeManager::new(berth_home.clone());
-    let registry = Registry::from_seed();
-    let (spec, undeclared_network) = match build_process_spec(server, &installed, &registry) {
-        Ok(spec) => spec,
+    let global_policy = match load_global_policy() {
+        Ok(policy) => policy,
         Err(msg) => {
-            if msg.starts_with(NETWORK_PERMISSION_DENIED_PREFIX) {
-                let _ = runtime.record_audit_event(
-                    server,
-                    "permission-network-denied",
-                    None,
-                    Some(&installed.runtime.command),
-                    Some(&installed.runtime.args),
-                );
-            }
             eprintln!("{} {}", "✗".red().bold(), msg);
             process::exit(1);
         }
     };
+    let registry = Registry::from_seed();
+    let (spec, undeclared_network) =
+        match build_process_spec(server, &installed, &registry, &global_policy) {
+            Ok(spec) => spec,
+            Err(msg) => {
+                if msg.starts_with(NETWORK_PERMISSION_DENIED_PREFIX) {
+                    let _ = runtime.record_audit_event(
+                        server,
+                        "permission-network-denied",
+                        None,
+                        Some(&installed.runtime.command),
+                        Some(&installed.runtime.args),
+                    );
+                } else if msg.starts_with(POLICY_DENIED_PREFIX) {
+                    let _ = runtime.record_audit_event(
+                        server,
+                        "policy-denied",
+                        None,
+                        Some(&installed.runtime.command),
+                        Some(&installed.runtime.args),
+                    );
+                }
+                eprintln!("{} {}", "✗".red().bold(), msg);
+                process::exit(1);
+            }
+        };
     if !undeclared_network.is_empty() {
         println!(
             "{} {} has undeclared network grant override(s): {} (log-only).",
@@ -158,6 +177,7 @@ fn build_process_spec(
     name: &str,
     installed: &InstalledServer,
     registry: &Registry,
+    global_policy: &GlobalPolicy,
 ) -> Result<(ProcessSpec, Vec<String>), String> {
     let mut env = BTreeMap::new();
 
@@ -187,6 +207,7 @@ fn build_process_spec(
     }
 
     let overrides = load_permission_overrides(name)?;
+    enforce_global_policy(name, &installed.permissions, &overrides, global_policy)?;
     validate_network_permissions(name, &installed.permissions.network, &overrides)?;
     let undeclared_network = undeclared_network_grants(&installed.permissions.network, &overrides);
     let sandbox_policy = parse_sandbox_policy(&installed.config)?;

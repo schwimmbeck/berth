@@ -171,6 +171,12 @@ fn write_publish_submission(
     std::fs::write(path, serde_json::to_string_pretty(&payload).unwrap()).unwrap();
 }
 
+fn write_global_policy(tmp: &std::path::Path, content: &str) {
+    let path = tmp.join(".berth").join("policy.toml");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, content).unwrap();
+}
+
 fn write_github_raw_manifest(
     raw_base: &std::path::Path,
     repo: &str,
@@ -1914,6 +1920,47 @@ fn start_blocks_when_sandbox_network_deny_all_and_audits() {
 }
 
 #[test]
+fn start_blocks_when_org_policy_denies_network_wildcard_and_audits() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "token=abc123"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["permissions", "github", "--grant", "network:*"])
+        .output()
+        .unwrap();
+    write_global_policy(
+        tmp.path(),
+        r#"
+[permissions]
+deny_network_wildcard = true
+"#,
+    );
+
+    let start = berth_with_home(tmp.path())
+        .args(["start", "github"])
+        .output()
+        .unwrap();
+    assert!(!start.status.success());
+    let stderr = String::from_utf8_lossy(&start.stderr);
+    assert!(stderr.contains("Policy denied"));
+    assert!(stderr.contains("network wildcard"));
+
+    let audit = berth_with_home(tmp.path())
+        .args(["audit", "github"])
+        .output()
+        .unwrap();
+    assert!(audit.status.success());
+    let audit_out = String::from_utf8_lossy(&audit.stdout);
+    assert!(audit_out.contains("policy-denied"));
+}
+
+#[test]
 fn proxy_sets_sandbox_env_when_basic_enabled() {
     let tmp = tempfile::tempdir().unwrap();
     berth_with_home(tmp.path())
@@ -3196,6 +3243,44 @@ fn proxy_blocks_when_network_fully_revoked_and_audits() {
     assert!(audit.status.success());
     let audit_out = String::from_utf8_lossy(&audit.stdout);
     assert!(audit_out.contains("permission-network-denied"));
+}
+
+#[test]
+fn proxy_blocks_when_org_policy_denies_server_and_audits() {
+    let tmp = tempfile::tempdir().unwrap();
+    berth_with_home(tmp.path())
+        .args(["install", "github"])
+        .output()
+        .unwrap();
+    berth_with_home(tmp.path())
+        .args(["config", "github", "--set", "token=abc123"])
+        .output()
+        .unwrap();
+    write_global_policy(
+        tmp.path(),
+        r#"
+[servers]
+deny = ["github"]
+"#,
+    );
+    patch_runtime_to_echo(tmp.path(), "github");
+
+    let output = berth_with_home(tmp.path())
+        .args(["proxy", "github"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Policy denied"));
+    assert!(stderr.contains("server is blocked"));
+
+    let audit = berth_with_home(tmp.path())
+        .args(["audit", "github"])
+        .output()
+        .unwrap();
+    assert!(audit.status.success());
+    let audit_out = String::from_utf8_lossy(&audit.stdout);
+    assert!(audit_out.contains("policy-denied"));
 }
 
 #[test]

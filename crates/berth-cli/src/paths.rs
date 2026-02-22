@@ -36,6 +36,11 @@ pub fn audit_log_path() -> Option<PathBuf> {
     berth_home().map(|h| h.join("audit").join("audit.jsonl"))
 }
 
+/// Returns the global org-policy file path.
+pub fn policy_path() -> Option<PathBuf> {
+    berth_home().map(|h| h.join("policy.toml"))
+}
+
 /// Returns the local publish queue directory path.
 pub fn publish_queue_dir() -> Option<PathBuf> {
     berth_home().map(|h| h.join("publish").join("queue"))
